@@ -1,0 +1,37 @@
+{
+  "telegram": {
+    "token": "1234567890:ABCDEFG_ab1-asdfghjkl12345",
+    "chatId": -123456789
+  },
+  "telegramUser": {
+    "apiId": 12345678,
+    "apiHash": "your-api-hash-here",
+    "phoneNumber": "+8613800138000",
+    "sessionFile": "./session.tg"
+  },
+  "admin": { "username": "nodeseeker", "password": "nodeseeker@123456" },
+  "site": {
+    "name": "NodeSeek",
+    "maxFileSize": 10,
+    "maxDocumentSize": 1024,
+    "port": 18080,
+    "host": "127.0.0.1",
+    "favicon": "favicon.ico"
+  },
+  "database": {
+    "path": "./images.db",
+    "maxOpenConns": 25,
+    "maxIdleConns": 10,
+    "connMaxLifetime": "5m"
+  },
+  "security": {
+    "rateLimit": { "enabled": true, "limit": 60, "window": "1m" },
+    "allowedHosts": ["localhost", "127.0.0.1"],
+    "sessionSecret": "",
+    "statusKey": "nodeseek_status",
+    "apiKeys": ["your-secret-api-key-here"],
+    "requireAPIKey": false,
+    "requireLoginForUpload": false
+  },
+  "environment": "production"
+}

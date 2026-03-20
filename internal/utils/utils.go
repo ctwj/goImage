@@ -16,6 +16,14 @@ func GetFileExtension(mimeType string) (string, bool) {
 	return ext, ok
 }
 
+// GetFileCategory 判断文件是图片还是文档
+func GetFileCategory(mimeType string) string {
+	if strings.HasPrefix(mimeType, "image/") {
+		return "image"
+	}
+	return "document"
+}
+
 func NormalizeFileExtension(filename string) string {
 	ext := strings.ToLower(filepath.Ext(filename))
 	if ext == ".jpeg" {

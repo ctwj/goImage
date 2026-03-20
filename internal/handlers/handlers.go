@@ -17,6 +17,7 @@ import (
 
 	"hosting/internal/db"
 	"hosting/internal/global"
+	"hosting/internal/telegram"
 	"hosting/internal/template"
 	"hosting/internal/utils"
 )
@@ -97,9 +98,6 @@ func HandleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	maxSize := int64(global.AppConfig.Site.MaxFileSize * 1024 * 1024)
-	r.Body = http.MaxBytesReader(w, r.Body, maxSize)
-
 	file, header, err := r.FormFile("image")
 	if err != nil {
 		handleError(w, &AppError{
@@ -114,11 +112,6 @@ func HandleUpload(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[%s] failed to close uploaded file: %v", requestID, cerr)
 		}
 	}()
-
-	if header.Size > maxSize {
-		http.Error(w, "File size exceeds limit", http.StatusBadRequest)
-		return
-	}
 
 	buffer := make([]byte, 512)
 	_, err = file.Read(buffer)
@@ -145,9 +138,27 @@ func HandleUpload(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if !ok {
-			http.Error(w, "Unsupported file type. Only JPG/JPEG, PNG, GIF and WebP are allowed", http.StatusBadRequest)
+			http.Error(w, "Unsupported file type. Only images and documents are allowed", http.StatusBadRequest)
 			return
 		}
+	}
+
+	// 判断文件类别
+	fileCategory := utils.GetFileCategory(contentType)
+
+	// 根据文件类别选择大小限制
+	var maxSize int64
+	if fileCategory == "image" {
+		maxSize = int64(global.AppConfig.Site.MaxFileSize * 1024 * 1024)
+	} else {
+		maxSize = int64(global.AppConfig.Site.MaxDocumentSize * 1024 * 1024)
+	}
+
+	// 验证文件大小
+	if header.Size > maxSize {
+		maxSizeMB := maxSize / (1024 * 1024)
+		http.Error(w, fmt.Sprintf("File size exceeds %dMB limit", maxSizeMB), http.StatusBadRequest)
+		return
 	}
 
 	ipAddress := utils.ValidateIPAddress(r.RemoteAddr)
@@ -179,41 +190,85 @@ func HandleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 根据文件类型选择发送方式
-	var message tgbotapi.Message
 	var fileID string
+	var uploadMethod string
 
-	// 对于图片文件（JPG/PNG/WebP），使用 NewPhoto 发送
-	// 注意：Telegram 会将动态 WebP 转为静态图片，这是 Telegram 的限制
-	if contentType == "image/jpeg" || contentType == "image/jpg" || contentType == "image/png" || contentType == "image/webp" {
-		photoMsg := tgbotapi.NewPhoto(global.AppConfig.Telegram.ChatID, tgbotapi.FilePath(tempFile.Name()))
-		message, err = global.Bot.Send(photoMsg)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		// 获取最大尺寸的照片文件ID
-		if len(message.Photo) > 0 {
-			fileID = message.Photo[len(message.Photo)-1].FileID
+	if fileCategory == "image" {
+		// 图片文件：使用 Bot API
+		uploadMethod = "bot_api"
+		var message tgbotapi.Message
+
+		// 对于图片文件（JPG/PNG/WebP），使用 NewPhoto 发送
+		if contentType == "image/jpeg" || contentType == "image/jpg" || contentType == "image/png" || contentType == "image/webp" {
+			photoMsg := tgbotapi.NewPhoto(global.AppConfig.Telegram.ChatID, tgbotapi.FilePath(tempFile.Name()))
+			message, err = global.Bot.Send(photoMsg)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			// 获取最大尺寸的照片文件ID
+			if len(message.Photo) > 0 {
+				fileID = message.Photo[len(message.Photo)-1].FileID
+			}
+		} else {
+			// 对于 GIF，使用 Document 方式
+			docMsg := tgbotapi.NewDocument(global.AppConfig.Telegram.ChatID, tgbotapi.FilePath(tempFile.Name()))
+			message, err = global.Bot.Send(docMsg)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			fileID = message.Document.FileID
 		}
 	} else {
-		// 对于 GIF，使用 Document 方式
-		docMsg := tgbotapi.NewDocument(global.AppConfig.Telegram.ChatID, tgbotapi.FilePath(tempFile.Name()))
-		message, err = global.Bot.Send(docMsg)
+		// 文档文件：使用 User API
+		uploadMethod = "user_api"
+
+		// 检查 User API 是否可用
+		if global.UserClient == nil {
+			http.Error(w, "User API not configured. Please configure telegramUser in config.json and run with -auth flag",
+				http.StatusServiceUnavailable)
+			return
+		}
+
+		// 使用 User API 上传
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Minute) // 大文件需要更长的超时
+		defer cancel()
+
+		fileID, err = telegram.UploadDocument(ctx, tempFile.Name(),
+			global.AppConfig.Telegram.ChatID, filename)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to upload document: %v", err),
+				http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// 生成代理 URL
+	proxyUUID := uuid.New().String()
+	var proxyURL string
+	if fileCategory == "image" {
+		proxyURL = fmt.Sprintf("/file/%s%s", proxyUUID, fileExt)
+	} else {
+		proxyURL = fmt.Sprintf("/doc/%s%s", proxyUUID, fileExt)
+	}
+
+	// 获取 Telegram URL
+	var telegramURL string
+	if uploadMethod == "bot_api" {
+		telegramURL, err = global.Bot.GetFileDirectURL(fileID)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		fileID = message.Document.FileID
+	} else {
+		// User API 的 URL 获取方式
+		telegramURL, err = telegram.GetUserFileURL(r.Context(), fileID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
-	telegramURL, err := global.Bot.GetFileDirectURL(fileID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	proxyUUID := uuid.New().String()
-	proxyURL := fmt.Sprintf("/file/%s%s", proxyUUID, fileExt)
 
 	var scheme string
 	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
@@ -223,18 +278,44 @@ func HandleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	fullURL := fmt.Sprintf("%s://%s%s", scheme, r.Host, proxyURL)
 
+	// 根据文件类别选择数据库表
+	var tableName string
+	if fileCategory == "image" {
+		tableName = "images"
+	} else {
+		tableName = "documents"
+	}
+
 	err = db.WithDBTimeout(func(ctx context.Context) error {
-		stmt, err := global.DB.PrepareContext(ctx, `
-			INSERT INTO images (
-				telegram_url, 
-				proxy_url, 
-				ip_address, 
-				user_agent, 
-				filename,
-				content_type,
-				file_id
-			) VALUES (?, ?, ?, ?, ?, ?, ?)
-		`)
+		var insertSQL string
+		if fileCategory == "image" {
+			insertSQL = fmt.Sprintf(`
+				INSERT INTO %s (
+					telegram_url,
+					proxy_url,
+					ip_address,
+					user_agent,
+					filename,
+					content_type,
+					file_id
+				) VALUES (?, ?, ?, ?, ?, ?, ?)
+			`, tableName)
+		} else {
+			insertSQL = fmt.Sprintf(`
+				INSERT INTO %s (
+					telegram_url,
+					proxy_url,
+					ip_address,
+					user_agent,
+					filename,
+					content_type,
+					file_id,
+					file_size
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			`, tableName)
+		}
+
+		stmt, err := global.DB.PrepareContext(ctx, insertSQL)
 		if err != nil {
 			return err
 		}
@@ -244,15 +325,28 @@ func HandleUpload(w http.ResponseWriter, r *http.Request) {
 			}
 		}()
 
-		_, err = stmt.ExecContext(ctx,
-			telegramURL,
-			proxyURL,
-			ipAddress,
-			userAgent,
-			filename,
-			contentType,
-			fileID, // 添加 fileID
-		)
+		if fileCategory == "image" {
+			_, err = stmt.ExecContext(ctx,
+				telegramURL,
+				proxyURL,
+				ipAddress,
+				userAgent,
+				filename,
+				contentType,
+				fileID,
+			)
+		} else {
+			_, err = stmt.ExecContext(ctx,
+				telegramURL,
+				proxyURL,
+				ipAddress,
+				userAgent,
+				filename,
+				contentType,
+				fileID,
+				header.Size, // 记录文件大小
+			)
+		}
 		return err
 	})
 
@@ -627,21 +721,47 @@ func HandleAdmin(w http.ResponseWriter, r *http.Request) {
 	}
 	offset := (page - 1) * pageSize
 
+	// 获取查看类型（image 或 document，默认为 image）
+	viewType := r.URL.Query().Get("type")
+	if viewType == "" {
+		viewType = "image"
+	}
+
+	// 根据类型选择表
+	var tableName string
+	if viewType == "document" {
+		tableName = "documents"
+	} else {
+		tableName = "images"
+	}
+
 	// 获取总记录数
 	var total int
-	err := global.DB.QueryRow("SELECT COUNT(*) FROM images").Scan(&total)
+	err := global.DB.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName)).Scan(&total)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	// 获取分页数据
-	rows, err := global.DB.Query(`
-        SELECT id, proxy_url, ip_address, upload_time, filename, is_active, view_count, content_type
-        FROM images 
+	var query string
+	if viewType == "document" {
+		query = fmt.Sprintf(`
+        SELECT id, proxy_url, ip_address, upload_time, filename, is_active, view_count, content_type, file_size
+        FROM %s
         ORDER BY upload_time DESC
         LIMIT ? OFFSET ?
-    `, pageSize, offset)
+    `, tableName)
+	} else {
+		query = fmt.Sprintf(`
+        SELECT id, proxy_url, ip_address, upload_time, filename, is_active, view_count, content_type
+        FROM %s
+        ORDER BY upload_time DESC
+        LIMIT ? OFFSET ?
+    `, tableName)
+	}
+
+	rows, err := global.DB.Query(query, pageSize, offset)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -653,14 +773,28 @@ func HandleAdmin(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	var images []ImageRecord
-	for rows.Next() {
-		var img ImageRecord
-		err := rows.Scan(&img.ID, &img.ProxyURL, &img.IPAddress, &img.UploadTime,
-			&img.Filename, &img.IsActive, &img.ViewCount, &img.ContentType)
-		if err != nil {
-			continue
+	var documents []global.DocumentRecord
+
+	if viewType == "document" {
+		for rows.Next() {
+			var doc global.DocumentRecord
+			err := rows.Scan(&doc.ID, &doc.ProxyURL, &doc.IPAddress, &doc.UploadTime,
+				&doc.Filename, &doc.IsActive, &doc.ViewCount, &doc.ContentType, &doc.FileSize)
+			if err != nil {
+				continue
+			}
+			documents = append(documents, doc)
 		}
-		images = append(images, img)
+	} else {
+		for rows.Next() {
+			var img ImageRecord
+			err := rows.Scan(&img.ID, &img.ProxyURL, &img.IPAddress, &img.UploadTime,
+				&img.Filename, &img.IsActive, &img.ViewCount, &img.ContentType)
+			if err != nil {
+				continue
+			}
+			images = append(images, img)
+		}
 	}
 
 	totalPages := (total + pageSize - 1) / pageSize
@@ -675,6 +809,8 @@ func HandleAdmin(w http.ResponseWriter, r *http.Request) {
 		Title      string
 		Favicon    string
 		Images     []ImageRecord
+		Documents  []global.DocumentRecord
+		ViewType   string
 		Page       int
 		TotalPages int
 		HasPrev    bool
@@ -683,6 +819,8 @@ func HandleAdmin(w http.ResponseWriter, r *http.Request) {
 		Title:      utils.GetPageTitle("管理"),
 		Favicon:    global.AppConfig.Site.Favicon,
 		Images:     images,
+		Documents:  documents,
+		ViewType:   viewType,
 		Page:       page,
 		TotalPages: totalPages,
 		HasPrev:    page > 1,
@@ -706,4 +844,135 @@ func HandleToggleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+// HandleDocument 处理文档文件下载
+func HandleDocument(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	uuid := vars["uuid"]
+
+	// 设置 CORS 头部
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Range")
+	w.Header().Set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges")
+
+	// 处理 OPTIONS 预检请求
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	w.Header().Set("Cache-Control", "public, max-age=31536000")
+	w.Header().Set("Expires", time.Now().AddDate(1, 0, 0).UTC().Format(http.TimeFormat))
+
+	var telegramURL, contentType string
+	var isActive bool
+	var fileID string
+
+	err := db.WithDBTimeout(func(ctx context.Context) error {
+		return global.DB.QueryRowContext(ctx, `
+            SELECT telegram_url, content_type, is_active, file_id
+            FROM documents
+            WHERE proxy_url LIKE ?`,
+			fmt.Sprintf("/doc/%s%%", uuid),
+		).Scan(&telegramURL, &contentType, &isActive, &fileID)
+	})
+
+	if err != nil {
+		http.Error(w, "Document not found", http.StatusNotFound)
+		return
+	}
+
+	if !isActive {
+		// 尝试读取占位图片
+		deletedImage, err := os.ReadFile("static/deleted.jpg")
+		if err != nil {
+			log.Printf("Failed to read deleted placeholder image: %v", err)
+			http.Error(w, "Document has been deleted", http.StatusGone)
+			return
+		}
+
+		w.Header().Set("Content-Type", "image/jpeg")
+		w.Header().Set("Content-Length", strconv.Itoa(len(deletedImage)))
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.Header().Set("X-Image-Status", "deleted")
+
+		w.WriteHeader(http.StatusOK)
+		if _, werr := w.Write(deletedImage); werr != nil {
+			log.Printf("failed to write deleted placeholder image: %v", werr)
+		}
+
+		log.Printf("Served deleted placeholder for document UUID: %s", uuid)
+		return
+	}
+
+	// 检查URL缓存
+	global.URLCacheMux.RLock()
+	cache, exists := global.URLCache[telegramURL]
+	global.URLCacheMux.RUnlock()
+
+	if !exists || time.Now().After(cache.ExpiresAt) {
+		// 获取新的URL
+		newURL, err := telegram.GetUserFileURL(r.Context(), fileID)
+		if err != nil {
+			http.Error(w, "Failed to refresh file URL", http.StatusInternalServerError)
+			return
+		}
+
+		// 更新缓存
+		global.URLCacheMux.Lock()
+		global.URLCache[telegramURL] = &global.FileURLCache{
+			URL:       newURL,
+			ExpiresAt: time.Now().Add(global.URLCacheTime),
+		}
+		global.URLCacheMux.Unlock()
+
+		// 更新数据库中的URL
+		err = db.WithDBTimeout(func(ctx context.Context) error {
+			tx, err := global.DB.BeginTx(ctx, nil)
+			if err != nil {
+				return err
+			}
+			defer func() {
+				if err != nil {
+					if rerr := tx.Rollback(); rerr != nil {
+						log.Printf("failed to rollback transaction: %v", rerr)
+					}
+				}
+			}()
+
+			_, err = tx.ExecContext(ctx,
+				"UPDATE documents SET telegram_url = ?, view_count = view_count + 1 WHERE proxy_url LIKE ?",
+				newURL, fmt.Sprintf("/doc/%s%%", uuid))
+			if err != nil {
+				return err
+			}
+
+			return tx.Commit()
+		})
+
+		if err != nil {
+			log.Printf("Failed to update database: %v", err)
+		}
+	} else {
+		// 使用缓存的 URL
+		_ = cache.URL
+
+		// 只更新访问计数
+		err = db.WithDBTimeout(func(ctx context.Context) error {
+			_, err := global.DB.ExecContext(ctx,
+				"UPDATE documents SET view_count = view_count + 1 WHERE proxy_url LIKE ?",
+				fmt.Sprintf("/doc/%s%%", uuid))
+			return err
+		})
+
+		if err != nil {
+			log.Printf("Failed to update view count: %v", err)
+		}
+	}
+
+	// TODO: 实现从 User API 下载文件并返回给客户端
+	// 由于 User API 的文件下载实现比较复杂，这里暂时返回一个占位响应
+	http.Error(w, "Document download not fully implemented yet", http.StatusNotImplemented)
 }

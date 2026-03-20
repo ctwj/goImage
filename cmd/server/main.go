@@ -32,6 +32,7 @@ func main() {
 	var (
 		configPath = flag.String("config", "", "配置文件路径 (默认: ./config.json)")
 		workDir    = flag.String("workdir", "", "工作目录 (默认: 程序所在目录)")
+		authMode   = flag.Bool("auth", false, "执行 Telegram User API 认证")
 		showHelp   = flag.Bool("help", false, "显示帮助信息")
 		showVer    = flag.Bool("version", false, "显示版本信息")
 	)
@@ -45,6 +46,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  imagehosting                                    # 使用默认配置\n")
 		fmt.Fprintf(os.Stderr, "  imagehosting -config /etc/goimage/config.json  # 指定配置文件\n")
 		fmt.Fprintf(os.Stderr, "  imagehosting -workdir /opt/goimage              # 指定工作目录\n")
+		fmt.Fprintf(os.Stderr, "  imagehosting -auth                              # 执行 Telegram User API 认证\n")
 	}
 
 	flag.Parse()
@@ -94,6 +96,15 @@ func main() {
 	config.LoadConfig()
 	logger.Info("配置加载完成")
 
+	// 检查是否为认证模式
+	if *authMode {
+		logger.Info("进入认证模式...")
+		if err := telegram.AuthenticateUser(); err != nil {
+			log.Fatalf("认证失败: %v", err)
+		}
+		os.Exit(0)
+	}
+
 	// 初始化数据库
 	db.InitDB()
 	logger.Info("数据库连接初始化完成")
@@ -101,6 +112,14 @@ func main() {
 	// 初始化 Telegram bot
 	telegram.InitTelegram()
 	logger.Info("Telegram 机器人初始化完成")
+
+	// 初始化 Telegram User API
+	if err := telegram.InitUserAPI(); err != nil {
+		logger.Error("Telegram User API 初始化失败: %v", err)
+		// 不终止程序，因为 User API 是可选的
+	} else {
+		logger.Info("Telegram User API 初始化完成")
+	}
 
 	// 初始化模板
 	template.InitTemplates()
@@ -164,6 +183,7 @@ func main() {
 	r.HandleFunc("/", handlers.HandleHome).Methods("GET")
 	r.HandleFunc("/upload", middleware.RequireAuthForUpload(handlers.HandleUpload)).Methods("POST")
 	r.HandleFunc("/file/{uuid}", handlers.HandleImage).Methods("GET", "HEAD", "OPTIONS")
+	r.HandleFunc("/doc/{uuid}", handlers.HandleDocument).Methods("GET", "HEAD", "OPTIONS")
 	r.HandleFunc("/login", handlers.HandleLoginPage).Methods("GET")
 	r.HandleFunc("/login", handlers.HandleLogin).Methods("POST")
 	r.HandleFunc("/logout", handlers.HandleLogout).Methods("GET")

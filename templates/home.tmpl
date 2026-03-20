@@ -378,11 +378,11 @@
             <form action="/upload" method="post" enctype="multipart/form-data" id="uploadForm" onsubmit="return handleSubmit(event)">
                 <div class="upload-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
                     <div class="upload-text">
-                        <span>点击或拖拽图片到这里上传</span>
-                        <small>支持 JPG、PNG、GIF、WebP 格式，最大 {{.MaxFileSize}}MB</small>
+                        <span>点击或拖拽文件到这里上传</span>
+                        <small>支持 JPG、PNG、GIF、WebP 图片格式，最大 {{.MaxFileSize}}MB<br>支持 PDF、ZIP、DOC、DOCX、XLS、XLSX、PPT、PPTX 文档格式，最大 {{.MaxDocumentSize}}MB</small>
                     </div>
                 </div>
-                <input type="file" name="image" accept="image/*" id="fileInput" class="file-input">
+                <input type="file" name="image" accept="image/*,.pdf,.zip,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.odt,.ods,.odp" id="fileInput" class="file-input">
                 
                 <!-- 添加剪贴板粘贴提示 -->
                 <div class="paste-hint">
@@ -412,9 +412,38 @@
         </div>
 
         <script>
-            const maxFileSize = {{.MaxFileSize}} * 1024 * 1024; // 转换为字节
+            const maxFileSize = {{.MaxFileSize}} * 1024 * 1024; // 转换为字节（图片）
+            const maxDocumentSize = {{.MaxDocumentSize}} * 1024 * 1024; // 转换为字节（文档）
             const requireLoginForUpload = {{.RequireLoginForUpload}};
             const isLoggedIn = {{.IsLoggedIn}};
+
+            // 支持的文件类型
+            const allowedImageTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+            const allowedDocumentTypes = [
+                'application/pdf',
+                'application/zip',
+                'application/x-zip-compressed',
+                'application/msword',
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                'application/vnd.ms-excel',
+                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'application/vnd.ms-powerpoint',
+                'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                'text/plain',
+                'application/vnd.oasis.opendocument.text',
+                'application/vnd.oasis.opendocument.spreadsheet',
+                'application/vnd.oasis.opendocument.presentation'
+            ];
+            const allowedTypes = [...allowedImageTypes, ...allowedDocumentTypes];
+
+            // 根据文件类型获取大小限制
+            function getMaxFileSize(fileType) {
+                if (allowedImageTypes.includes(fileType)) {
+                    return maxFileSize;
+                } else {
+                    return maxDocumentSize;
+                }
+            }
 
             // 将字节数格式化为可读文本
             function formatBytes(bytes) {
@@ -428,7 +457,7 @@
             // 检查是否需要登录才能上传
             function checkLoginRequired() {
                 if (requireLoginForUpload && !isLoggedIn) {
-                    showLoginAlert('此站点仅允许登录用户上传图片，请先登录');
+                    showLoginAlert('此站点仅允许登录用户上传文件，请先登录');
                     return false;
                 }
                 return true;
@@ -455,15 +484,16 @@
                 const file = e.target.files[0];
                 if (file) {
                     // 验证文件类型
-                    const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
                     if (!allowedTypes.includes(file.type)) {
-                        showAlert('不支持的文件类型。请上传 JPG、PNG、GIF 或 WebP 格式的图片。');
+                        showAlert('不支持的文件类型。请上传图片或文档文件。');
                         this.value = ''; // 清除选择的文件
                         return;
                     }
 
-                    if (file.size > maxFileSize) {
-                        showAlert('文件大小超过 ' + {{.MaxFileSize}} + 'MB 限制');
+                    const maxSize = getMaxFileSize(file.type);
+                    if (file.size > maxSize) {
+                        const maxSizeMB = maxSize / (1024 * 1024);
+                        showAlert('文件大小超过 ' + maxSizeMB + 'MB 限制');
                         this.value = ''; // 清除选择的文件
                         return;
                     }
@@ -473,7 +503,7 @@
 
             // 拖拽上传功能
             const dropZone = document.getElementById('dropZone');
-            
+
             dropZone.addEventListener('dragover', (e) => {
                 e.preventDefault();
                 dropZone.style.borderColor = '#357abd';
@@ -500,14 +530,15 @@
                 if (files.length > 0) {
                     const file = files[0];
                     // 验证文件类型
-                    const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
                     if (!allowedTypes.includes(file.type)) {
-                        showAlert('不支持的文件类型。请上传 JPG、PNG、GIF 或 WebP 格式的图片。');
+                        showAlert('不支持的文件类型。请上传图片或文档文件。');
                         return;
                     }
-                    
-                    if (file.size > maxFileSize) {
-                        showAlert('文件大小超过 ' + {{.MaxFileSize}} + 'MB 限制');
+
+                    const maxSize = getMaxFileSize(file.type);
+                    if (file.size > maxSize) {
+                        const maxSizeMB = maxSize / (1024 * 1024);
+                        showAlert('文件大小超过 ' + maxSizeMB + 'MB 限制');
                         return;
                     }
                     document.getElementById('fileInput').files = files;
@@ -515,19 +546,19 @@
                 }
             });
 
-            // 添加剪贴板粘贴功能
+            // 添加剪贴板粘贴功能（仅支持图片）
             document.addEventListener('paste', function(e) {
                 // 获取剪贴板数据
                 const items = e.clipboardData.items;
                 let imageFile = null;
-                
+
                 for (let i = 0; i < items.length; i++) {
                     if (items[i].type.indexOf('image') !== -1) {
                         imageFile = items[i].getAsFile();
                         break;
                     }
                 }
-                
+
                 if (!imageFile) {
                     return; // 没有图片数据
                 }
@@ -536,55 +567,54 @@
                 if (!checkLoginRequired()) {
                     return;
                 }
-                
+
                 // 验证文件类型
-                const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-                if (!allowedTypes.includes(imageFile.type)) {
+                if (!allowedImageTypes.includes(imageFile.type)) {
                     showAlert('不支持的文件类型。请上传 JPG、PNG、GIF 或 WebP 格式的图片。');
                     return;
                 }
-                
+
                 // 验证文件大小
                 if (imageFile.size > maxFileSize) {
                     showAlert('文件大小超过 ' + {{.MaxFileSize}} + 'MB 限制');
                     return;
                 }
-                
+
                 // 创建日期字符串作为文件名
                 const now = new Date();
-                const fileName = 'clipboard_' + 
-                    now.getFullYear() + 
-                    ('0' + (now.getMonth() + 1)).slice(-2) + 
-                    ('0' + now.getDate()).slice(-2) + 
-                    ('0' + now.getHours()).slice(-2) + 
-                    ('0' + now.getMinutes()).slice(-2) + 
-                    ('0' + now.getSeconds()).slice(-2) + 
+                const fileName = 'clipboard_' +
+                    now.getFullYear() +
+                    ('0' + (now.getMonth() + 1)).slice(-2) +
+                    ('0' + now.getDate()).slice(-2) +
+                    ('0' + now.getHours()).slice(-2) +
+                    ('0' + now.getMinutes()).slice(-2) +
+                    ('0' + now.getSeconds()).slice(-2) +
                     '.' + imageFile.type.split('/')[1];
-                
+
                 // 创建一个新的File对象，包含自定义文件名
                 const renamedFile = new File([imageFile], fileName, {
                     type: imageFile.type,
                     lastModified: new Date().getTime()
                 });
-                
+
                 // 创建一个新的FileList对象（间接方式）
                 const dataTransfer = new DataTransfer();
                 dataTransfer.items.add(renamedFile);
-                
+
                 // 更新文件输入框的值
                 const fileInput = document.getElementById('fileInput');
                 fileInput.files = dataTransfer.files;
-                
+
                 // 更新UI显示已选择的文件并显示体积
                 document.querySelector('.upload-text').innerHTML = '已选择: ' + fileName + ' (' + formatBytes(renamedFile.size) + ')';
-                
+
                 // 闪烁上传区域，提示用户已添加文件
                 dropZone.style.transition = 'background-color 0.3s';
                 dropZone.style.backgroundColor = '#e0f0ff';
                 setTimeout(() => {
                     dropZone.style.backgroundColor = '#f8fbff';
                 }, 300);
-                
+
                 // 自动滚动到上传按钮
                 document.querySelector('.upload-button').scrollIntoView({ behavior: 'smooth' });
             });
@@ -592,20 +622,21 @@
             function validateForm() {
                 const fileInput = document.getElementById('fileInput');
                 if (!fileInput.files || fileInput.files.length === 0) {
-                    showAlert('请选择要上传的图片');
+                    showAlert('请选择要上传的文件');
                     return false;
                 }
 
                 const file = fileInput.files[0];
                 // 验证文件类型
-                const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
                 if (!allowedTypes.includes(file.type)) {
-                    showAlert('不支持的文件类型。请上传 JPG、PNG、GIF 或 WebP 格式的图片。');
+                    showAlert('不支持的文件类型。请上传图片或文档文件。');
                     return false;
                 }
 
-                if (file.size > maxFileSize) {
-                    showAlert('文件大小超过 ' + {{.MaxFileSize}} + 'MB 限制');
+                const maxSize = getMaxFileSize(file.type);
+                if (file.size > maxSize) {
+                    const maxSizeMB = maxSize / (1024 * 1024);
+                    showAlert('文件大小超过 ' + maxSizeMB + 'MB 限制');
                     return false;
                 }
                 return true;
@@ -629,15 +660,17 @@
                 }
 
                 const fileInput = document.getElementById('fileInput');
-                
+
                 if (!fileInput.files || fileInput.files.length === 0) {
-                    showAlert('请选择要上传的图片');
+                    showAlert('请选择要上传的文件');
                     return false;
                 }
 
                 const file = fileInput.files[0];
-                if (file.size > maxFileSize) {
-                    showAlert('文件大小超过 ' + {{.MaxFileSize}} + 'MB 限制');
+                const maxSize = getMaxFileSize(file.type);
+                if (file.size > maxSize) {
+                    const maxSizeMB = maxSize / (1024 * 1024);
+                    showAlert('文件大小超过 ' + maxSizeMB + 'MB 限制');
                     return false;
                 }
 
@@ -652,13 +685,13 @@
 
                 // 发送请求
                 const xhr = new XMLHttpRequest();
-                
+
                 xhr.upload.onprogress = function(e) {
                     if (e.lengthComputable) {
                         const percentComplete = (e.loaded / e.total) * 100;
                         progressBar.style.width = percentComplete + '%';
                         progressText.textContent = '上传中: ' + Math.round(percentComplete) + '%';
-                        
+
                         // 当上传完成时显示处理动画
                         if (percentComplete === 100) {
                             progressText.style.display = 'none';
@@ -675,7 +708,7 @@
                     } else {
                         progressText.style.display = 'block';
                         document.getElementById('processingIndicator').style.display = 'none';
-                        
+
                         // 尝试解析 JSON 错误消息
                         let errorMsg = xhr.statusText;
                         try {
@@ -684,7 +717,7 @@
                                 errorMsg = resp.message;
                             }
                         } catch(e) {}
-                        
+
                         // 处理需要登录的情况
                         if (xhr.status === 401) {
                             progressText.innerHTML = errorMsg + ' <a href="/login" style="color: #4a90e2;">点击登录</a>';
@@ -704,7 +737,7 @@
 
                 xhr.open('POST', '/upload', true);
                 xhr.send(formData);
-                
+
                 return false;
             }
         </script>

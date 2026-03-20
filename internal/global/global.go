@@ -11,10 +11,11 @@ import (
 
 var (
 	// 全局变量
-	DB        *sql.DB
-	AppConfig Config
-	Bot       *tgbotapi.BotAPI
-	Store     *sessions.CookieStore // 移除初始化，将在 main 中进行
+	DB         *sql.DB
+	AppConfig  Config
+	Bot        *tgbotapi.BotAPI
+	Store      *sessions.CookieStore // 移除初始化，将在 main 中进行
+	UserClient interface{}           // User API 客户端
 
 	// 并发控制
 	UploadSemaphore chan struct{} // 用于限制并发上传
@@ -28,11 +29,26 @@ var (
 
 	// 允许的文件类型
 	AllowedMimeTypes = map[string]string{
+		// 图片类型
 		"image/jpeg": ".jpg",
 		"image/jpg":  ".jpg",
 		"image/png":  ".png",
 		"image/gif":  ".gif",
 		"image/webp": ".webp",
+		// 文档类型
+		"application/pdf":                                                    ".pdf",
+		"application/zip":                                                    ".zip",
+		"application/x-zip-compressed":                                       ".zip",
+		"application/msword":                                                 ".doc",
+		"application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+		"application/vnd.ms-excel":                                           ".xls",
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":  ".xlsx",
+		"application/vnd.ms-powerpoint":                                      ".ppt",
+		"application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+		"text/plain":                                                         ".txt",
+		"application/vnd.oasis.opendocument.text":                            ".odt",
+		"application/vnd.oasis.opendocument.spreadsheet":                     ".ods",
+		"application/vnd.oasis.opendocument.presentation":                    ".odp",
 	}
 
 	IsDevelopment = false // 开发环境标志，默认为生产环境
@@ -49,6 +65,12 @@ type Config struct {
 		Token  string `json:"token"`
 		ChatID int64  `json:"chatId"`
 	} `json:"telegram"`
+	TelegramUser struct {
+		APIID       int    `json:"apiId"`
+		APIHash     string `json:"apiHash"`
+		PhoneNumber string `json:"phoneNumber"`
+		SessionFile string `json:"sessionFile"`
+	} `json:"telegramUser"`
 	Admin struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
@@ -60,11 +82,12 @@ type Config struct {
 		ConnMaxLifetime string `json:"connMaxLifetime"`
 	} `json:"database"`
 	Site struct {
-		Name        string `json:"name"`
-		Favicon     string `json:"favicon"`
-		MaxFileSize int    `json:"maxFileSize"`
-		Port        int    `json:"port"`
-		Host        string `json:"host"`
+		Name            string `json:"name"`
+		Favicon         string `json:"favicon"`
+		MaxFileSize     int    `json:"maxFileSize"`     // 图片文件大小限制（MB）
+		MaxDocumentSize int    `json:"maxDocumentSize"` // 文档文件大小限制（MB）
+		Port            int    `json:"port"`
+		Host            string `json:"host"`
 	} `json:"site"`
 	Security struct {
 		RateLimit struct {
@@ -94,6 +117,21 @@ type ImageRecord struct {
 	ContentType string
 	IsActive    bool
 	ViewCount   int
+}
+
+// DocumentRecord 文档记录结构
+type DocumentRecord struct {
+	ID          int
+	TelegramURL string
+	ProxyURL    string
+	IPAddress   string
+	UserAgent   string
+	UploadTime  string
+	Filename    string
+	ContentType string
+	IsActive    bool
+	ViewCount   int
+	FileSize    int64 // 文件大小（字节）
 }
 
 // FileURLCache 用于缓存文件URL

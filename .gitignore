@@ -27,7 +27,7 @@ go.work.sum
 # binaries
 bin/
 
-
+config.json
 developement_testing/
 
 imageHosting

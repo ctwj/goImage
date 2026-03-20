@@ -57,6 +57,27 @@ func InitDB() {
 		log.Fatal(err)
 	}
 
+	// 创建 documents 表
+	_, err = global.DB.Exec(`
+	CREATE TABLE IF NOT EXISTS documents (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		telegram_url TEXT NOT NULL,
+		proxy_url TEXT NOT NULL,
+		ip_address TEXT NOT NULL,
+		user_agent TEXT NOT NULL,
+		upload_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+		filename TEXT NOT NULL,
+		content_type TEXT NOT NULL,
+		is_active BOOLEAN DEFAULT 1,
+		view_count INTEGER DEFAULT 0,
+		file_id TEXT NOT NULL,
+		file_size INTEGER NOT NULL
+	)`)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	// 创建优化的索引
 	_, err = global.DB.Exec(`
     -- 优化查询时的索引
@@ -67,6 +88,13 @@ func InitDB() {
     
     -- 复合索引，优化管理页面查询
     CREATE INDEX IF NOT EXISTS idx_active_time ON images(is_active, upload_time DESC);
+    
+    -- documents 表的索引
+    CREATE INDEX IF NOT EXISTS idx_doc_proxy_url ON documents(proxy_url);
+    CREATE INDEX IF NOT EXISTS idx_doc_upload_time ON documents(upload_time);
+    CREATE INDEX IF NOT EXISTS idx_doc_is_active ON documents(is_active);
+    CREATE INDEX IF NOT EXISTS idx_doc_file_id ON documents(file_id);
+    CREATE INDEX IF NOT EXISTS idx_doc_active_time ON documents(is_active, upload_time DESC);
     `)
 
 	if err != nil {
