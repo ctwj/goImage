@@ -188,7 +188,7 @@ func main() {
 	r.HandleFunc("/login", handlers.HandleLogin).Methods("POST")
 	r.HandleFunc("/logout", handlers.HandleLogout).Methods("GET")
 	r.HandleFunc("/admin", middleware.RequireAuth(handlers.HandleAdmin)).Methods("GET")
-	r.HandleFunc("/admin/toggle/{id}", middleware.RequireAuth(handlers.HandleToggleStatus)).Methods("POST")
+	r.HandleFunc("/admin/toggle/{type}/{id}", middleware.RequireAuth(handlers.HandleToggleStatus)).Methods("POST")
 
 	// RESTful API 路由
 	apiRouter := r.PathPrefix("/api/v1").Subrouter()
@@ -217,7 +217,7 @@ func main() {
 		Addr:           addr,
 		Handler:        middleware.LoggingMiddleware(r), // 添加日志记录中间件
 		ReadTimeout:    15 * time.Second,
-		WriteTimeout:   30 * time.Second,  // 增加写入超时，处理大文件
+		WriteTimeout:   60 * time.Minute, // 增加写入超时，支持大文件上传
 		IdleTimeout:    120 * time.Second, // 增加空闲连接超时
 		MaxHeaderBytes: 1 << 20,           // 限制请求头大小为 1MB
 	}

@@ -25,7 +25,7 @@ var (
 	StaticDir            = "./static"
 	MaxConcurrentUploads = 5
 	DBTimeout            = 10 * time.Second
-	UploadTimeout        = 30 * time.Second
+	UploadTimeout        = 60 * time.Minute // 增加超时时间，支持大文件上传
 
 	// 允许的文件类型
 	AllowedMimeTypes = map[string]string{
@@ -70,6 +70,7 @@ type Config struct {
 		APIHash     string `json:"apiHash"`
 		PhoneNumber string `json:"phoneNumber"`
 		SessionFile string `json:"sessionFile"`
+		ChatID      int64  `json:"chatId"`
 	} `json:"telegramUser"`
 	Admin struct {
 		Username string `json:"username"`

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 
@@ -200,9 +201,11 @@ func HandleAPIUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 生成公开URL
+	// 生成公开URL（包含原始文件名）
 	proxyUUID := uuid.New().String()
-	proxyURL := fmt.Sprintf("/file/%s%s", proxyUUID, fileExt)
+	// 对文件名进行 URL 编码
+	encodedFilename := url.PathEscape(filename)
+	proxyURL := fmt.Sprintf("/file/%s-%s", proxyUUID, encodedFilename)
 
 	// 构建完整URL
 	var scheme string

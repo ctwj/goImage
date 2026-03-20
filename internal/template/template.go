@@ -1,6 +1,7 @@
 package template
 
 import (
+	"fmt"
 	"html/template"
 	"log"
 	"path/filepath"
@@ -22,6 +23,19 @@ func InitTemplates() {
 		},
 		"subtract": func(a, b int) int {
 			return a - b
+		},
+		"formatFileSize": func(bytes int64) string {
+			if bytes == 0 {
+				return "0 B"
+			}
+			const k = 1024
+			sizes := []string{"B", "KB", "MB", "GB", "TB"}
+			i := 0
+			for bytes >= k && i < len(sizes)-1 {
+				bytes /= k
+				i++
+			}
+			return fmt.Sprintf("%.2f %s", float64(bytes), sizes[i])
 		},
 	}
 

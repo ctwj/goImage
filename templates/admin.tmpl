@@ -62,6 +62,41 @@
             color: var(--text-color);
         }
 
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .tab-button {
+            padding: 10px 20px;
+            background-color: transparent;
+            border: 2px solid var(--primary-color);
+            border-radius: 6px;
+            color: var(--primary-color);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .tab-button:hover {
+            background-color: rgba(74, 144, 226, 0.1);
+        }
+
+        .tab-button.active {
+            background-color: var(--primary-color);
+            color: white;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
         .nav-buttons {
             display: flex;
             gap: 10px;
@@ -406,88 +441,151 @@
 </head>
 <body>
     <div class="header">
-        <h1>图片管理系统</h1>
+        <h1>管理系统</h1>
         <div class="nav-buttons">
-            <a href="/" class="button">上传图片</a>
+            <a href="/" class="button">上传文件</a>
             <a href="/logout" class="button logout-button">退出登录</a>
         </div>
     </div>
 
     <div class="container">
-        <table>
-            <thead>
-                <tr>
-                    <th>缩略图</th>
-                    <th>ID</th>
-                    <th>文件名</th>
-                    <th>访问链接</th>
-                    <th>IP地址</th>
-                    <th>上传时间</th>
-                    <th>访问次数</th>
-                    <th>状态</th>
-                    <th>操作</th>
-                </tr>
-            </thead>
-            <tbody>
-                {{range .Images}}
-                <tr {{if not .IsActive}}class="inactive"{{end}}>
-                    <td class="thumbnail-cell">
-                        {{if eq .ContentType "image/gif"}}
-                            <div class="thumbnail-wrapper gif-badge">
-                                <img src="{{.ProxyURL}}" 
-                                     alt="{{.Filename}}" 
-                                     class="thumbnail" 
-                                     loading="lazy"
-                                     data-loading="true"
-                                     onload="this.removeAttribute('data-loading')"
-                                     onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%2250%22 x=%2250%22 text-anchor=%22middle%22 font-size=%2230%22%3E%E2%9D%8C%3C/text%3E%3C/svg%3E'; this.removeAttribute('data-loading')"
-                                     onclick="openLightbox('{{.ProxyURL}}', '{{.Filename}}')">
-                            </div>
-                        {{else}}
-                            <div class="thumbnail-wrapper">
-                                <img src="{{.ProxyURL}}" 
-                                     alt="{{.Filename}}" 
-                                     class="thumbnail" 
-                                     loading="lazy"
-                                     data-loading="true"
-                                     onload="this.removeAttribute('data-loading')"
-                                     onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%2250%22 x=%2250%22 text-anchor=%22middle%22 font-size=%2230%22%3E%E2%9D%8C%3C/text%3E%3C/svg%3E'; this.removeAttribute('data-loading')"
-                                     onclick="openLightbox('{{.ProxyURL}}', '{{.Filename}}')">
-                            </div>
-                        {{end}}
-                    </td>
-                    <td>{{.ID}}</td>
-                    <td title="{{.Filename}}">{{.Filename}}</td>
-                    <td><a href="{{.ProxyURL}}" target="_blank">{{.ProxyURL}}</a></td>
-                    <td>{{.IPAddress}}</td>
-                    <td>{{.UploadTime}}</td>
-                    <td>{{.ViewCount}}</td>
-                    <td>{{if .IsActive}}✓ 活跃{{else}}✗ 已删除{{end}}</td>
-                    <td>
-                        <button onclick="toggleStatus({{.ID}})" 
-                            class="action-button {{if .IsActive}}delete-button{{else}}restore-button{{end}}">
-                            {{if .IsActive}}删除{{else}}恢复{{end}}
-                        </button>
-                    </td>
-                </tr>
+        <div class="tabs">
+            <button class="tab-button {{if eq .ViewType "image"}}active{{end}}" onclick="switchTab('image')">图片列表</button>
+            <button class="tab-button {{if eq .ViewType "document"}}active{{end}}" onclick="switchTab('document')">文件列表</button>
+        </div>
+
+        <!-- 图片列表 -->
+        <div id="image-content" class="tab-content {{if eq .ViewType "image"}}active{{end}}">
+            <table>
+                <thead>
+                    <tr>
+                        <th>缩略图</th>
+                        <th>ID</th>
+                        <th>文件名</th>
+                        <th>访问链接</th>
+                        <th>IP地址</th>
+                        <th>上传时间</th>
+                        <th>访问次数</th>
+                        <th>状态</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .Images}}
+                    <tr {{if not .IsActive}}class="inactive"{{end}}>
+                        <td class="thumbnail-cell">
+                            {{if eq .ContentType "image/gif"}}
+                                <div class="thumbnail-wrapper gif-badge">
+                                    <img src="{{.ProxyURL}}" 
+                                         alt="{{.Filename}}" 
+                                         class="thumbnail" 
+                                         loading="lazy"
+                                         data-loading="true"
+                                         onload="this.removeAttribute('data-loading')"
+                                         onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%2250%22 x=%2250%22 text-anchor=%22middle%22 font-size=%2230%22%3E%E2%9D%8C%3C/text%3E%3C/svg%3E'; this.removeAttribute('data-loading')"
+                                         onclick="openLightbox('{{.ProxyURL}}', '{{.Filename}}')">
+                                </div>
+                            {{else}}
+                                <div class="thumbnail-wrapper">
+                                    <img src="{{.ProxyURL}}" 
+                                         alt="{{.Filename}}" 
+                                         class="thumbnail" 
+                                         loading="lazy"
+                                         data-loading="true"
+                                         onload="this.removeAttribute('data-loading')"
+                                         onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%2250%22 x=%2250%22 text-anchor=%22middle%22 font-size=%2230%22%3E%E2%9D%8C%3C/text%3E%3C/svg%3E'; this.removeAttribute('data-loading')"
+                                         onclick="openLightbox('{{.ProxyURL}}', '{{.Filename}}')">
+                                </div>
+                            {{end}}
+                        </td>
+                        <td>{{.ID}}</td>
+                        <td title="{{.Filename}}">{{.Filename}}</td>
+                        <td><a href="{{.ProxyURL}}" target="_blank">{{.ProxyURL}}</a></td>
+                        <td>{{.IPAddress}}</td>
+                        <td>{{.UploadTime}}</td>
+                        <td>{{.ViewCount}}</td>
+                        <td>{{if .IsActive}}✓ 活跃{{else}}✗ 已删除{{end}}</td>
+                        <td>
+                            <button onclick="toggleStatus('image', {{.ID}})" 
+                                class="action-button {{if .IsActive}}delete-button{{else}}restore-button{{end}}">
+                                {{if .IsActive}}删除{{else}}恢复{{end}}
+                            </button>
+                        </td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+
+            <div class="pagination">
+                {{if .HasPrev}}
+                    <a href="?page={{subtract .Page 1}}&type=image">&laquo; 上一页</a>
+                {{else}}
+                    <span class="disabled">&laquo; 上一页</span>
                 {{end}}
-            </tbody>
-        </table>
 
-        <div class="pagination">
-            {{if .HasPrev}}
-                <a href="?page={{subtract .Page 1}}">&laquo; 上一页</a>
-            {{else}}
-                <span class="disabled">&laquo; 上一页</span>
-            {{end}}
+                <span class="current">第 {{.Page}} 页 / 共 {{.TotalPages}} 页</span>
 
-            <span class="current">第 {{.Page}} 页 / 共 {{.TotalPages}} 页</span>
-
-            {{if .HasNext}}
-                <a href="?page={{add .Page 1}}">下一页 &raquo;</a>
-            {{else}}
+                {{if .HasNext}}
+                    <a href="?page={{add .Page 1}}&type=image">下一页 &raquo;</a>
+                {{else}}
                 <span class="disabled">下一页 &raquo;</span>
-            {{end}}
+                {{end}}
+            </div>
+        </div>
+
+        <!-- 文件列表 -->
+        <div id="document-content" class="tab-content {{if eq .ViewType "document"}}active{{end}}">
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>文件名</th>
+                        <th>访问链接</th>
+                        <th>文件大小</th>
+                        <th>IP地址</th>
+                        <th>上传时间</th>
+                        <th>访问次数</th>
+                        <th>状态</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .Documents}}
+                    <tr {{if not .IsActive}}class="inactive"{{end}}>
+                        <td>{{.ID}}</td>
+                        <td title="{{.Filename}}">{{.Filename}}</td>
+                        <td><a href="{{.ProxyURL}}" target="_blank">{{.ProxyURL}}</a></td>
+                        <td>{{formatFileSize .FileSize}}</td>
+                        <td>{{.IPAddress}}</td>
+                        <td>{{.UploadTime}}</td>
+                        <td>{{.ViewCount}}</td>
+                        <td>{{if .IsActive}}✓ 活跃{{else}}✗ 已删除{{end}}</td>
+                        <td>
+                            <button onclick="toggleStatus('document', {{.ID}})" 
+                                class="action-button {{if .IsActive}}delete-button{{else}}restore-button{{end}}">
+                                {{if .IsActive}}删除{{else}}恢复{{end}}
+                            </button>
+                        </td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+
+            <div class="pagination">
+                {{if .HasPrev}}
+                    <a href="?page={{subtract .Page 1}}&type=document">&laquo; 上一页</a>
+                {{else}}
+                    <span class="disabled">&laquo; 上一页</span>
+                {{end}}
+
+                <span class="current">第 {{.Page}} 页 / 共 {{.TotalPages}} 页</span>
+
+                {{if .HasNext}}
+                    <a href="?page={{add .Page 1}}&type=document">下一页 &raquo;</a>
+                {{else}}
+                <span class="disabled">下一页 &raquo;</span>
+                {{end}}
+            </div>
         </div>
     </div>
 
@@ -499,9 +597,27 @@
     </div>
 
     <script>
-        function toggleStatus(id) {
-            fetch('/admin/toggle/' + id, {method: 'POST'})
+        function toggleStatus(type, id) {
+            fetch('/admin/toggle/' + type + '/' + id, {method: 'POST'})
                 .then(() => location.reload());
+        }
+
+        // Tab切换功能
+        function switchTab(type) {
+            // 更新URL参数
+            const url = new URL(window.location);
+            url.searchParams.set('type', type);
+            url.searchParams.set('page', '1');
+            window.location.href = url.toString();
+        }
+
+        // 文件大小格式化
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
         }
 
         // 打开灯箱查看大图

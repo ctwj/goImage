@@ -51,6 +51,7 @@ func SanitizeUserAgent(ua string) string {
 	return ua
 }
 
+// SanitizeFilename 清理文件名，移除 Windows 不允许的字符
 func SanitizeFilename(filename string) string {
 	filename = filepath.Base(filename)
 	reg := regexp.MustCompile(`[<>:"/\\|?*\x00-\x1f]`)
@@ -59,10 +60,50 @@ func SanitizeFilename(filename string) string {
 		now := time.Now()
 		filename = fmt.Sprintf("image_%s", now.Format("20060102150405"))
 	}
-	if len([]rune(filename)) > 100 {
+	
+	// 限制文件名长度（Windows 限制 255 字符）
+	if len([]rune(filename)) > 250 {
+		ext := filepath.Ext(filename)
 		runes := []rune(filename)
-		filename = string(runes[:100])
+		// 保留扩展名
+		if len(ext) > 0 {
+			filename = string(runes[:250-len([]rune(ext))]) + ext
+		} else {
+			filename = string(runes[:250])
+		}
 	}
+	return filename
+}
+
+// CleanFilenameForWindows 清理文件名以适应 Windows 文件系统
+func CleanFilenameForWindows(filename string) string {
+	// 替换 Windows 不允许的字符
+	windowsInvalidChars := []string{"<", ">", ":", "\"", "/", "\\", "|", "?", "*"}
+	for _, char := range windowsInvalidChars {
+		filename = strings.ReplaceAll(filename, char, "_")
+	}
+	
+	// 移除控制字符
+	reg := regexp.MustCompile(`[\x00-\x1f]`)
+	filename = reg.ReplaceAllString(filename, "")
+	
+	// 限制文件名长度
+	if len([]rune(filename)) > 250 {
+		ext := filepath.Ext(filename)
+		runes := []rune(filename)
+		if len(ext) > 0 {
+			filename = string(runes[:250-len([]rune(ext))]) + ext
+		} else {
+			filename = string(runes[:250])
+		}
+	}
+	
+	// 确保文件名不为空
+	if filename == "" || filename == "." {
+		now := time.Now()
+		filename = fmt.Sprintf("file_%s", now.Format("20060102150405"))
+	}
+	
 	return filename
 }
 
