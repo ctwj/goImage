@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -16,6 +17,7 @@ import (
 	"hosting/internal/db"
 	"hosting/internal/global"
 	"hosting/internal/logger"
+	"hosting/internal/telegram"
 	"hosting/internal/utils"
 )
 
@@ -35,15 +37,15 @@ type ImageResponse struct {
 	UploadTime  string `json:"uploadTime"`
 }
 
-// HandleAPIUpload 处理通过API上传图片
+// HandleAPIUpload 处理通过API上传文件（支持图片和文档）
 func HandleAPIUpload(w http.ResponseWriter, r *http.Request) {
 	// 设置响应类型为JSON
 	w.Header().Set("Content-Type", "application/json")
 
 	// 处理跨域请求
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "POST")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key")
 
 	// 处理预检请求
 	if r.Method == "OPTIONS" {
@@ -77,7 +79,7 @@ func HandleAPIUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 限制上传文件大小
+	// 根据文件类别限制上传文件大小（先使用图片大小限制作为初始值）
 	maxSize := int64(global.AppConfig.Site.MaxFileSize * 1024 * 1024)
 	r.Body = http.MaxBytesReader(w, r.Body, maxSize)
 
@@ -100,13 +102,7 @@ func HandleAPIUpload(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// 检查文件大小
-	if header.Size > maxSize {
-		sendJSONError(w, fmt.Sprintf("文件大小超过限制 (%dMB)", global.AppConfig.Site.MaxFileSize), http.StatusBadRequest)
-		return
-	}
-
-	// 检查文件类型
+	// 检测文件类型
 	buffer := make([]byte, 512)
 	_, err = file.Read(buffer)
 	if err != nil {
@@ -132,9 +128,27 @@ func HandleAPIUpload(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if !ok {
-			sendJSONError(w, "不支持的文件类型，仅支持JPG/JPEG, PNG, GIF和WebP格式", http.StatusBadRequest)
+			sendJSONError(w, "不支持的文件类型", http.StatusBadRequest)
 			return
 		}
+	}
+
+	// 判断文件类别
+	fileCategory := utils.GetFileCategory(contentType)
+	logger.Debug("[%s] File category: %s, content-type: %s", requestID, fileCategory, contentType)
+
+	// 根据文件类别选择大小限制
+	if fileCategory == "image" {
+		maxSize = int64(global.AppConfig.Site.MaxFileSize * 1024 * 1024)
+	} else {
+		maxSize = int64(global.AppConfig.Site.MaxDocumentSize * 1024 * 1024)
+	}
+
+	// 检查文件大小
+	if header.Size > maxSize {
+		maxSizeMB := maxSize / (1024 * 1024)
+		sendJSONError(w, fmt.Sprintf("文件大小超过限制 (%dMB)", maxSizeMB), http.StatusBadRequest)
+		return
 	}
 
 	// 记录客户端信息
@@ -151,61 +165,115 @@ func HandleAPIUpload(w http.ResponseWriter, r *http.Request) {
 		sendJSONError(w, "创建临时文件失败", http.StatusInternalServerError)
 		return
 	}
-	defer func() {
-		if cerr := os.Remove(tempFile.Name()); cerr != nil {
-			logger.Error("[%s] failed to remove temp file %s: %v", requestID, tempFile.Name(), cerr)
-		}
-	}()
-	defer func() {
-		if cerr := tempFile.Close(); cerr != nil {
-			logger.Error("[%s] failed to close temp file %s: %v", requestID, tempFile.Name(), cerr)
-		}
-	}()
+	tempPath := tempFile.Name()
 
 	// 复制上传文件到临时文件
 	_, err = io.Copy(tempFile, file)
 	if err != nil {
+		tempFile.Close()
+		os.Remove(tempPath)
 		sendJSONError(w, "保存上传文件失败", http.StatusInternalServerError)
 		return
 	}
+	tempFile.Close()
 
-	// 根据文件类型选择发送方式
-	var message tgbotapi.Message
-	var fileID string
+	// 重命名临时文件为原始文件名（用于 Telegram 显示）
+	finalFilename := utils.CleanFilenameForWindows(filename)
+	tempDir := filepath.Dir(tempPath)
+	finalPath := filepath.Join(tempDir, finalFilename)
+	os.Remove(finalPath)
 
-	// 对于图片文件，使用NewPhoto发送以确保在Telegram中正确显示
-	if contentType == "image/jpeg" || contentType == "image/jpg" || contentType == "image/png" || contentType == "image/webp" {
-		photoMsg := tgbotapi.NewPhoto(global.AppConfig.Telegram.ChatID, tgbotapi.FilePath(tempFile.Name()))
-		message, err = global.Bot.Send(photoMsg)
-		if err != nil {
-			sendJSONError(w, "上传到存储服务失败", http.StatusInternalServerError)
-			return
-		}
-		// 获取最大尺寸的照片文件ID
-		if len(message.Photo) > 0 {
-			fileID = message.Photo[len(message.Photo)-1].FileID
-		}
-	} else {
-		// 对于GIF等其他格式，仍使用Document方式
-		docMsg := tgbotapi.NewDocument(global.AppConfig.Telegram.ChatID, tgbotapi.FilePath(tempFile.Name()))
-		message, err = global.Bot.Send(docMsg)
-		if err != nil {
-			sendJSONError(w, "上传到存储服务失败", http.StatusInternalServerError)
-			return
-		}
-		fileID = message.Document.FileID
+	if err := os.Rename(tempPath, finalPath); err != nil {
+		// 重命名失败，使用临时文件路径
+		logger.Debug("[%s] Rename failed, using temp path: %v", requestID, err)
+		finalPath = tempPath
 	}
-	telegramURL, err := global.Bot.GetFileDirectURL(fileID)
-	if err != nil {
-		sendJSONError(w, "获取文件URL失败", http.StatusInternalServerError)
+
+	// 上传完成后清理文件
+	defer func() {
+		if err := os.Remove(finalPath); err != nil {
+			logger.Debug("[%s] failed to remove temp file: %v", requestID, err)
+		}
+	}()
+
+	var fileID string
+	var telegramURL string
+	var proxyURLPath string
+
+	uploadStartTime := time.Now()
+
+	if fileCategory == "image" {
+		// 图片文件：使用 Bot API
+		logger.Debug("[%s] Uploading image via Bot API: %s", requestID, filename)
+
+		var message tgbotapi.Message
+		if contentType == "image/jpeg" || contentType == "image/jpg" || contentType == "image/png" || contentType == "image/webp" {
+			photoMsg := tgbotapi.NewPhoto(global.AppConfig.Telegram.ChatID, tgbotapi.FilePath(finalPath))
+			message, err = global.Bot.Send(photoMsg)
+			if err != nil {
+				sendJSONError(w, "上传到存储服务失败", http.StatusInternalServerError)
+				return
+			}
+			if len(message.Photo) > 0 {
+				fileID = message.Photo[len(message.Photo)-1].FileID
+			}
+		} else {
+			// GIF 等其他图片格式
+			docMsg := tgbotapi.NewDocument(global.AppConfig.Telegram.ChatID, tgbotapi.FilePath(finalPath))
+			message, err = global.Bot.Send(docMsg)
+			if err != nil {
+				sendJSONError(w, "上传到存储服务失败", http.StatusInternalServerError)
+				return
+			}
+			fileID = message.Document.FileID
+		}
+
+		telegramURL, err = global.Bot.GetFileDirectURL(fileID)
+		if err != nil {
+			sendJSONError(w, "获取文件URL失败", http.StatusInternalServerError)
+			return
+		}
+
+		proxyUUID := uuid.New().String()
+		encodedFilename := url.PathEscape(filename)
+		proxyURLPath = fmt.Sprintf("/file/%s-%s", proxyUUID, encodedFilename)
+
+	} else if fileCategory == "document" {
+		// 文档文件：使用 User API（更快）
+		logger.Debug("[%s] Uploading document via User API: %s", requestID, filename)
+
+		if !telegram.IsUserAPIReady() {
+			sendJSONError(w, "文档上传服务暂不可用，请联系管理员配置 User API", http.StatusServiceUnavailable)
+			return
+		}
+
+		uploadCtx, uploadCancel := context.WithTimeout(r.Context(), 60*time.Minute)
+		defer uploadCancel()
+
+		fileID, err = telegram.UploadDocument(uploadCtx, finalPath,
+			global.AppConfig.TelegramUser.ChatID, filename)
+		if err != nil {
+			logger.Error("[%s] User API upload failed: %v", requestID, err)
+			sendJSONError(w, fmt.Sprintf("文档上传失败: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		telegramURL, err = telegram.GetDownloadURL(r.Context(), fileID)
+		if err != nil {
+			sendJSONError(w, "获取文件URL失败", http.StatusInternalServerError)
+			return
+		}
+
+		proxyUUID := uuid.New().String()
+		encodedFilename := url.PathEscape(filename)
+		proxyURLPath = fmt.Sprintf("/doc/%s-%s", proxyUUID, encodedFilename)
+	} else {
+		sendJSONError(w, "不支持的文件类型", http.StatusBadRequest)
 		return
 	}
 
-	// 生成公开URL（包含原始文件名）
-	proxyUUID := uuid.New().String()
-	// 对文件名进行 URL 编码
-	encodedFilename := url.PathEscape(filename)
-	proxyURL := fmt.Sprintf("/file/%s-%s", proxyUUID, encodedFilename)
+	uploadDuration := time.Since(uploadStartTime)
+	logger.Debug("[%s] Upload completed in %v", requestID, uploadDuration)
 
 	// 构建完整URL
 	var scheme string
@@ -214,47 +282,58 @@ func HandleAPIUpload(w http.ResponseWriter, r *http.Request) {
 	} else {
 		scheme = "http"
 	}
-	fullURL := fmt.Sprintf("%s://%s%s", scheme, r.Host, proxyURL)
+	fullURL := fmt.Sprintf("%s://%s%s", scheme, r.Host, proxyURLPath)
 
 	// 存储记录到数据库
 	uploadTime := time.Now().Format(time.RFC3339)
+
+	var tableName string
+	if fileCategory == "image" {
+		tableName = "images"
+	} else {
+		tableName = "documents"
+	}
+
 	err = db.WithDBTimeout(func(ctx context.Context) error {
-		stmt, err := global.DB.PrepareContext(ctx, `
-			INSERT INTO images (
-				telegram_url, 
-				proxy_url, 
-				ip_address, 
-				user_agent, 
-				filename,
-				content_type,
-				file_id,
-				upload_time
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		`)
+		var insertSQL string
+		if fileCategory == "image" {
+			insertSQL = fmt.Sprintf(`
+				INSERT INTO %s (
+					telegram_url, proxy_url, ip_address, user_agent,
+					filename, content_type, file_id, upload_time
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			`, tableName)
+		} else {
+			insertSQL = fmt.Sprintf(`
+				INSERT INTO %s (
+					telegram_url, proxy_url, ip_address, user_agent,
+					filename, content_type, file_id, file_size, upload_time
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			`, tableName)
+		}
+
+		stmt, err := global.DB.PrepareContext(ctx, insertSQL)
 		if err != nil {
 			return err
 		}
-		defer func() {
-			if cerr := stmt.Close(); cerr != nil {
-				logger.Error("[%s] failed to close statement: %v", requestID, cerr)
-			}
-		}()
+		defer stmt.Close()
 
-		_, err = stmt.ExecContext(ctx,
-			telegramURL,
-			proxyURL,
-			ipAddress,
-			userAgent,
-			filename,
-			contentType,
-			fileID,
-			uploadTime,
-		)
+		if fileCategory == "image" {
+			_, err = stmt.ExecContext(ctx,
+				telegramURL, proxyURLPath, ipAddress, userAgent,
+				filename, contentType, fileID, uploadTime,
+			)
+		} else {
+			_, err = stmt.ExecContext(ctx,
+				telegramURL, proxyURLPath, ipAddress, userAgent,
+				filename, contentType, fileID, header.Size, uploadTime,
+			)
+		}
 		return err
 	})
 
 	if err != nil {
-		logger.Error("数据库插入失败: %v", err)
+		logger.Error("[%s] 数据库插入失败: %v", requestID, err)
 		sendJSONError(w, "保存记录失败", http.StatusInternalServerError)
 		return
 	}

@@ -15,6 +15,8 @@
 - 缩略图支持（v0.1.5+）
 - CORS 支持，可嵌入其他网站
 - 速率限制和安全防护
+- **文档文件支持（v0.1.9+）**：支持 PDF、ZIP、Office 文档等
+- **Telegram User API 支持**：通过 User API 上传大文件
 
 ## 项目架构
 
@@ -23,7 +25,7 @@
 - **语言**: Go 1.26.0
 - **Web 框架**: Gorilla Mux (路由)
 - **会话管理**: Gorilla Sessions
-- **存储后端**: Telegram Bot API
+- **存储后端**: Telegram Bot API + Telegram User API (gotd/td)
 - **数据库**: SQLite (modernc.org/sqlite)
 - **前端**: 原生 HTML/CSS/JavaScript + Go 模板
 
@@ -43,6 +45,8 @@ goImage/
 │   ├── handlers/         # HTTP 处理器
 │   ├── middleware/       # 中间件（认证、日志等）
 │   ├── telegram/         # Telegram 集成
+│   │   ├── telegram.go   # Bot API 集成
+│   │   └── user_api.go   # User API 集成（文档上传）
 │   ├── template/         # 模板渲染
 │   ├── utils/            # 工具函数
 │   └── logger/           # 日志系统
@@ -57,7 +61,7 @@ goImage/
 │   └── deleted.jpg       # 已删除图片占位符
 ├── tools/                 # 工具脚本
 │   └── generate_apikey.go # API 密钥生成工具
-├── config.json           # 主配置文件
+├── config.json.example   # 配置文件示例
 ├── go.mod                # Go 模块定义
 ├── README.md             # 项目文档
 └── API.md                # API 文档
@@ -68,11 +72,12 @@ goImage/
 #### 1. 服务器端 (cmd/server/main.go)
 - **职责**: 提供 Web 服务和 RESTful API
 - **端口**: 默认 18080
-- **依赖**: Telegram Bot、SQLite 数据库
+- **依赖**: Telegram Bot、Telegram User API（可选）、SQLite 数据库
 - **关键功能**:
-  - 图片上传处理
+  - 图片上传处理（Bot API）
+  - 文档上传处理（User API）
   - 用户认证（基于 session）
-  - 图片代理和缓存
+  - 图片/文档代理和缓存
   - 访问统计和管理
 
 #### 2. 客户端工具 (cmd/client/main.go)
@@ -91,15 +96,16 @@ goImage/
 **db/db.go**:
 - SQLite 数据库连接管理
 - 提供带超时的数据库操作
-- 主要表: `images` (存储图片元数据)
+- 主要表: `images` (图片元数据), `documents` (文档元数据)
 
 **handlers/handlers.go**:
 - HandleHome: 首页渲染
-- HandleUpload: 图片上传处理
+- HandleUpload: 图片/文档上传处理
 - HandleImage: 图片访问代理
+- HandleDocument: 文档访问代理
 - HandleLoginPage/HandleLogin: 登录处理
 - HandleAdmin: 管理后台
-- HandleToggleStatus: 切换图片状态
+- HandleToggleStatus: 切换文件状态
 
 **handlers/api.go**:
 - HandleAPIUpload: RESTful API 上传端点
@@ -120,6 +126,12 @@ goImage/
 - 图片上传到 Telegram 频道
 - 获取 Telegram 文件 URL
 
+**telegram/user_api.go**:
+- Telegram User API 初始化和认证
+- 文档文件上传（支持大文件）
+- User API 文件下载
+- 交互式认证流程
+
 **template/template.go**:
 - 模板加载和缓存
 - 模板渲染
@@ -132,6 +144,7 @@ goImage/
 - Telegram Bot Token
 - Telegram 频道 Chat ID
 - SQLite (自动包含)
+- （可选）Telegram User API 凭证（用于文档上传）
 
 ### 配置文件
 
@@ -143,6 +156,13 @@ goImage/
     "token": "your-bot-token",
     "chatId": -123456789
   },
+  "telegramUser": {
+    "apiId": 12345678,
+    "apiHash": "your-api-hash-here",
+    "phoneNumber": "+8613800138000",
+    "sessionFile": "./session.tg",
+    "chatId": 123456789
+  },
   "admin": {
     "username": "admin",
     "password": "password"
@@ -150,6 +170,7 @@ goImage/
   "site": {
     "name": "Site Name",
     "maxFileSize": 10,
+    "maxDocumentSize": 1024,
     "port": 18080,
     "host": "127.0.0.1",
     "favicon": "favicon.ico"
@@ -177,73 +198,102 @@ goImage/
 }
 ```
 
+**配置说明**:
+
+| 配置项 | 说明 |
+|--------|------|
+| `telegram.token` | Telegram Bot Token |
+| `telegram.chatId` | 存储图片的频道 Chat ID（负数） |
+| `telegramUser.apiId` | Telegram API ID（从 my.telegram.org 获取） |
+| `telegramUser.apiHash` | Telegram API Hash |
+| `telegramUser.phoneNumber` | 手机号码（国际格式） |
+| `telegramUser.sessionFile` | Session 文件路径 |
+| `telegramUser.chatId` | 存储文档的频道 Chat ID（正数） |
+| `site.maxFileSize` | 图片文件大小限制（MB） |
+| `site.maxDocumentSize` | 文档文件大小限制（MB） |
+
 ### 编译服务器端
 
 ```bash
-cd G:/server/goImage
-go build -o imagehosting.exe ./cmd/server
+go build -o imagehosting ./cmd/server
 ```
 
 ### 编译客户端工具
 
 ```bash
-cd G:/server/goImage
-go build -o imagehosting-client.exe ./cmd/client
+go build -o imagehosting-client ./cmd/client
 ```
 
 ### 编译 API 密钥生成工具
 
 ```bash
-cd G:/server/goImage/tools
-go build -o generate_apikey.exe generate_apikey.go
+cd tools && go build -o generate_apikey generate_apikey.go
 ```
 
 ### 运行服务器
 
 ```bash
 # 使用默认配置
-./imagehosting.exe
+./imagehosting
 
 # 指定配置文件
-./imagehosting.exe -config /path/to/config.json
+./imagehosting -config /path/to/config.json
 
 # 指定工作目录
-./imagehosting.exe -workdir /path/to/workdir
+./imagehosting -workdir /path/to/workdir
+
+# Telegram User API 认证（首次使用文档功能需要）
+./imagehosting -auth
 
 # 查看版本
-./imagehosting.exe -version
+./imagehosting -version
 
 # 查看帮助
-./imagehosting.exe -help
+./imagehosting -help
 ```
 
 ### 使用客户端上传
 
 ```bash
 # 基本用法
-./imagehosting-client.exe -url http://localhost:18080/api/v1/upload -file ./image.jpg
+./imagehosting-client -url http://localhost:18080/api/v1/upload -file ./image.jpg
 
 # 使用 API 密钥
-./imagehosting-client.exe -url http://localhost:18080/api/v1/upload -file ./image.jpg -key your-api-key
+./imagehosting-client -url http://localhost:18080/api/v1/upload -file ./image.jpg -key your-api-key
 
 # 详细输出
-./imagehosting-client.exe -url http://localhost:18080/api/v1/upload -file ./image.jpg -verbose
+./imagehosting-client -url http://localhost:18080/api/v1/upload -file ./image.jpg -verbose
 
 # 设置超时
-./imagehosting-client.exe -url http://localhost:18080/api/v1/upload -file ./image.jpg -timeout 120
+./imagehosting-client -url http://localhost:18080/api/v1/upload -file ./image.jpg -timeout 120
+```
+
+### Telegram User API 认证
+
+首次使用文档上传功能需要进行 User API 认证：
+
+```bash
+# 1. 配置 config.json 中的 telegramUser 部分
+# 2. 运行认证命令
+./imagehosting -auth
+
+# 3. 根据提示输入验证码
+# 4. 认证成功后生成 session.tg 文件
+# 5. 正常启动服务器
+./imagehosting
 ```
 
 ### 生成 API 密钥
 
 ```bash
 # 生成一个密钥（默认32字节）
-./generate_apikey.exe
+./generate_apikey
 
 # 生成多个密钥
-./generate_apikey.exe -count 5
+./generate_apikey -count 5
 
 # 指定密钥长度
-./generate_apikey.exe -length 64
+./generate_apikey -length 64
 ```
 
 ## RESTful API
@@ -291,7 +341,13 @@ go build -o generate_apikey.exe generate_apikey.go
 **响应**:
 ```json
 {
-  "status": "healthy"
+  "success": true,
+  "message": "API服务正常",
+  "data": {
+    "version": "1.0",
+    "status": "operational",
+    "timestamp": "2025-12-07T14:47:33Z"
+  }
 }
 ```
 
@@ -305,7 +361,7 @@ go build -o generate_apikey.exe generate_apikey.go
   "status": "ok",
   "startTime": "2025-12-07T14:47:33.151149269+08:00",
   "uptime": "725h46m49.280276368s",
-  "goVersion": "go1.25.5",
+  "goVersion": "go1.26.0",
   "numGoroutine": 8,
   "numCPU": 1,
   "memStats": {
@@ -327,16 +383,53 @@ go build -o generate_apikey.exe generate_apikey.go
 CREATE TABLE images (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     telegram_url TEXT NOT NULL,
-    proxy_url TEXT NOT NULL UNIQUE,
-    ip_address TEXT,
-    user_agent TEXT,
-    filename TEXT,
-    content_type TEXT,
-    file_id TEXT NOT NULL,
+    proxy_url TEXT NOT NULL,
+    ip_address TEXT NOT NULL,
+    user_agent TEXT NOT NULL,
     upload_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    filename TEXT NOT NULL,
+    content_type TEXT NOT NULL,
     is_active BOOLEAN DEFAULT 1,
-    view_count INTEGER DEFAULT 0
+    view_count INTEGER DEFAULT 0,
+    file_id TEXT NOT NULL
 );
+```
+
+### documents 表
+
+```sql
+CREATE TABLE documents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    telegram_url TEXT NOT NULL,
+    proxy_url TEXT NOT NULL,
+    ip_address TEXT NOT NULL,
+    user_agent TEXT NOT NULL,
+    upload_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+    filename TEXT NOT NULL,
+    content_type TEXT NOT NULL,
+    is_active BOOLEAN DEFAULT 1,
+    view_count INTEGER DEFAULT 0,
+    file_id TEXT NOT NULL,
+    file_size INTEGER NOT NULL
+);
+```
+
+### 索引
+
+```sql
+-- images 表索引
+CREATE INDEX idx_proxy_url ON images(proxy_url);
+CREATE INDEX idx_upload_time ON images(upload_time);
+CREATE INDEX idx_is_active ON images(is_active);
+CREATE INDEX idx_file_id ON images(file_id);
+CREATE INDEX idx_active_time ON images(is_active, upload_time DESC);
+
+-- documents 表索引
+CREATE INDEX idx_doc_proxy_url ON documents(proxy_url);
+CREATE INDEX idx_doc_upload_time ON documents(upload_time);
+CREATE INDEX idx_doc_is_active ON documents(is_active);
+CREATE INDEX idx_doc_file_id ON documents(file_id);
+CREATE INDEX idx_doc_active_time ON documents(is_active, upload_time DESC);
 ```
 
 ## 开发约定
@@ -390,11 +483,16 @@ CREATE TABLE images (
    - 删除图片只是禁止访问，数据仍保留在 Telegram 中
    - 无法真正删除 Telegram 中的文件
 
+4. **User API 认证**:
+   - 首次使用文档功能需要手动认证
+   - Session 文件需要妥善保管
+   - 长时间未使用可能需要重新认证
+
 ## 常见任务
 
 ### 添加新的图片格式支持
 
-1. 修改 `internal/utils/utils.go` 中的 `AllowedMimeTypes` 映射
+1. 修改 `internal/global/global.go` 中的 `AllowedMimeTypes` 映射
 2. 修改 `internal/handlers/handlers.go` 中的文件类型检测逻辑
 3. 更新文档
 
@@ -404,7 +502,8 @@ CREATE TABLE images (
 ```json
 {
   "site": {
-    "maxFileSize": 20  // 单位：MB
+    "maxFileSize": 20,      // 图片限制（MB）
+    "maxDocumentSize": 2048 // 文档限制（MB）
   }
 }
 ```
@@ -413,7 +512,7 @@ CREATE TABLE images (
 
 ### 启用 API 认证
 
-1. 生成 API 密钥: `./generate_apikey.exe`
+1. 生成 API 密钥: `./generate_apikey`
 2. 修改 `config.json`:
 ```json
 {
@@ -436,29 +535,39 @@ CREATE TABLE images (
 }
 ```
 
+### 配置文档上传功能
+
+1. 从 [my.telegram.org](https://my.telegram.org) 获取 API ID 和 API Hash
+2. 配置 `config.json` 中的 `telegramUser` 部分
+3. 运行认证命令: `./imagehosting -auth`
+4. 正常启动服务器
+
 ### 查看服务日志
 
 日志输出到标准输出，可以使用以下方式查看：
 
 ```bash
-# Windows PowerShell
-./imagehosting.exe | Tee-Object -FilePath app.log
+# Systemd 服务日志
+sudo journalctl -u imagehosting -f
 
-# 或者使用重定向
-./imagehosting.exe > app.log 2>&1
+# 或使用重定向
+./imagehosting > app.log 2>&1
 ```
 
 ### 数据库维护
 
 ```bash
 # 备份数据库
-copy images.db images.db.backup
+cp images.db images.db.backup
 
 # 查看数据库结构（需要 SQLite 工具）
 sqlite3 images.db ".schema"
 
 # 查询所有图片记录
 sqlite3 images.db "SELECT * FROM images;"
+
+# 查询所有文档记录
+sqlite3 images.db "SELECT * FROM documents;"
 ```
 
 ## 环境变量
@@ -476,7 +585,8 @@ sqlite3 images.db "SELECT * FROM images;"
 - URL 缓存: 缓存 Telegram 文件 URL，减少 API 调用
 - 缓存清理: 每 12 小时自动清理过期缓存
 - 数据库连接池: 使用连接池提高性能
-- 并发控制: 限制同时上传数量
+- WAL 模式: SQLite 使用 WAL 模式提升并发性能
+- 并发控制: 限制同时上传数量（默认 5）
 - 流式传输: 使用流式传输处理大文件
 
 ## 依赖项
@@ -484,10 +594,11 @@ sqlite3 images.db "SELECT * FROM images;"
 主要依赖（从 go.mod）：
 
 - `github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1`: Telegram Bot API
+- `github.com/gotd/td v0.142.0`: Telegram User API（用于文档上传）
 - `github.com/google/uuid v1.6.0`: UUID 生成
 - `github.com/gorilla/mux v1.8.1`: HTTP 路由
 - `github.com/gorilla/sessions v1.4.0`: Session 管理
-- `modernc.org/sqlite v1.46.1`: SQLite 驱动
+- `modernc.org/sqlite v1.46.1`: SQLite 驱动（纯 Go 实现）
 
 ## 贡献指南
 

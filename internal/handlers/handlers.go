@@ -1005,26 +1005,29 @@ func HandleDocument(w http.ResponseWriter, r *http.Request) {
 
 	// 检查是否是 User API 格式的 fileID
 	if len(fileID) > 9 && fileID[:9] == "document:" {
-		// User API 文件，直接下载
-		log.Printf("Downloading User API file: %s", fileID)
-		content, err := telegram.DownloadUserFile(r.Context(), fileID)
+		// User API 文件，使用流式下载（优化：避免加载到内存）
+		log.Printf("Streaming User API file: %s", fileID)
+		reader, err := telegram.StreamDocument(r.Context(), fileID)
 		if err != nil {
-			log.Printf("Failed to download User API file: %v", err)
+			log.Printf("Failed to stream User API file: %v", err)
 			http.Error(w, "Failed to download file", http.StatusInternalServerError)
 			return
 		}
+		defer reader.Close()
 
 		// 设置响应头
 		w.Header().Set("Content-Type", contentType)
-		w.Header().Set("Content-Length", strconv.Itoa(len(content)))
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
+		w.Header().Set("Accept-Ranges", "bytes")
 
-		// 写入文件内容
-		if _, err := w.Write(content); err != nil {
-			log.Printf("Failed to write User API file content: %v", err)
+		// 流式传输文件内容
+		buf := make([]byte, 32*1024)
+		written, err := io.CopyBuffer(w, reader, buf)
+		if err != nil {
+			log.Printf("Failed to stream User API file content: %v", err)
 		}
 
-		log.Printf("Successfully served User API file: %s (%d bytes)", fileID, len(content))
+		log.Printf("Successfully streamed User API file: %s (%d bytes)", fileID, written)
 		return
 	}
 
@@ -1131,17 +1134,9 @@ func HandleDocument(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Length", resp.Header.Get("Content-Length"))
 	
-	// 设置 Content-Disposition，使浏览器使用正确的文件名
-	// 从数据库中获取原始文件名
-	var originalFilename string
-	db.WithDBTimeout(func(ctx context.Context) error {
-		return global.DB.QueryRowContext(ctx,
-			"SELECT filename FROM documents WHERE proxy_url LIKE ?",
-			fmt.Sprintf("/doc/%s%%", actualUUID),
-		).Scan(&originalFilename)
-	})
-	if originalFilename != "" {
-		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", originalFilename))
+	// 设置 Content-Disposition，使用首次查询已获取的文件名
+	if filename != "" {
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
 	}
 
 	// 处理 Range 请求（断点续传）

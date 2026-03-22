@@ -51,13 +51,32 @@ jobs:
           BUILD_TIME="${{ steps.build_time.outputs.time }}"
           LDFLAGS="-s -w -X 'main.buildTime=$BUILD_TIME'"
           
-          OUTPUT_NAME="${APP_NAME}-server-${{ matrix.goos }}-${{ matrix.goarch }}"
+          OUTPUT_NAME="${APP_NAME}-${{ matrix.goos }}-${{ matrix.goarch }}"
+          PACKAGE_DIR="${OUTPUT_NAME}"
           
           echo "Building for ${{ matrix.goos }}/${{ matrix.goarch }}..."
-          go build -trimpath -ldflags "$LDFLAGS" -o "${OUTPUT_NAME}" ./cmd/server
+          go build -trimpath -ldflags "$LDFLAGS" -o "${PACKAGE_DIR}/${APP_NAME}" ./cmd/server
+          
+          echo "Copying additional files..."
+          # 复制配置示例
+          cp config.json.example "${PACKAGE_DIR}/"
+          
+          # 复制静态资源目录
+          cp -r static "${PACKAGE_DIR}/"
+          
+          # 复制模板目录
+          cp -r templates "${PACKAGE_DIR}/"
+          
+          # 复制文档文件
+          cp README.md "${PACKAGE_DIR}/" 2>/dev/null || true
+          cp API.md "${PACKAGE_DIR}/" 2>/dev/null || true
+          cp LICENSE "${PACKAGE_DIR}/" 2>/dev/null || true
+          
+          echo "Package contents:"
+          ls -la "${PACKAGE_DIR}/"
           
           echo "Creating zip archive..."
-          zip "${OUTPUT_NAME}.zip" "${OUTPUT_NAME}"
+          zip -r "${OUTPUT_NAME}.zip" "${PACKAGE_DIR}"
           
           echo "Generating SHA256 checksum..."
           sha256sum "${OUTPUT_NAME}.zip" > "${OUTPUT_NAME}.zip.sha256"
@@ -67,7 +86,7 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: imagehosting-server-${{ matrix.goos }}-${{ matrix.goarch }}
+          name: imagehosting-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
             *.zip
             *.sha256
@@ -79,6 +98,13 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Get build time
+        id: build_time
+        run: echo "time=$(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_OUTPUT
+      
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -107,11 +133,11 @@ jobs:
           prerelease: false
           files: release/*
           body: |
-            ## 图床服务器 ${{ inputs.tag_name }}
+            ## GoImage 图床服务 ${{ inputs.tag_name }}
             
             ### 编译信息
             - 编译时间: ${{ steps.build_time.outputs.time }}
-            - Go 版本: 1.25
+            - Go 版本: 1.26
             - CGO: 禁用
             
             ### 支持平台
@@ -120,11 +146,32 @@ jobs:
             - Linux LoongArch64
             - Linux RISC-V 64
             
+            ### 包含文件
+            - `imagehosting` - 可执行文件
+            - `config.json.example` - 配置示例
+            - `static/` - 静态资源目录
+            - `templates/` - 模板目录
+            - `README.md` - 说明文档
+            - `API.md` - API 文档
+            - `LICENSE` - 许可证
+            
             ### 安装说明
-            1. 下载对应平台的压缩包
-            2. 解压: `unzip imagehosting-server-*-*.zip`
-            3. 赋予执行权限: `chmod +x imagehosting-server-*-*`
-            4. 运行: `./imagehosting-server-*-*`
+            ```bash
+            # 1. 下载对应平台的压缩包
+            # 2. 解压
+            unzip imagehosting-linux-amd64.zip
+            cd imagehosting-linux-amd64
+            
+            # 3. 复制并编辑配置文件
+            cp config.json.example config.json
+            vim config.json
+            
+            # 4. 赋予执行权限
+            chmod +x imagehosting
+            
+            # 5. 运行
+            ./imagehosting
+            ```
             
             ### 校验和
             请使用 SHA256SUMS.txt 文件验证下载文件的完整性：

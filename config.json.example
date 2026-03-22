@@ -4,6 +4,7 @@
     "chatId": -123456789
   },
   "telegramUser": {
+    "maxDocumentSize": 600,
     "apiId": 12345678,
     "apiHash": "your-api-hash-here",
     "phoneNumber": "+8613800138000",
