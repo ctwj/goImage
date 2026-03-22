@@ -79,12 +79,18 @@ func HandleAPIUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 根据文件类别限制上传文件大小（先使用图片大小限制作为初始值）
-	maxSize := int64(global.AppConfig.Site.MaxFileSize * 1024 * 1024)
-	r.Body = http.MaxBytesReader(w, r.Body, maxSize)
+	// 设置 MaxBytesReader 的初始限制为图片和文档限制中的较大值
+	// 避免在大文件上传时过早截断请求
+	maxImageSize := int64(global.AppConfig.Site.MaxFileSize * 1024 * 1024)
+	maxDocumentSize := int64(global.AppConfig.Site.MaxDocumentSize * 1024 * 1024)
+	maxAllowedSize := maxImageSize
+	if maxDocumentSize > maxImageSize {
+		maxAllowedSize = maxDocumentSize
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxAllowedSize)
 
 	// 解析多部分表单
-	err := r.ParseMultipartForm(maxSize)
+	err := r.ParseMultipartForm(maxAllowedSize)
 	if err != nil {
 		sendJSONError(w, "无法解析表单数据", http.StatusBadRequest)
 		return
@@ -138,15 +144,16 @@ func HandleAPIUpload(w http.ResponseWriter, r *http.Request) {
 	logger.Debug("[%s] File category: %s, content-type: %s", requestID, fileCategory, contentType)
 
 	// 根据文件类别选择大小限制
+	var categoryMaxSize int64
 	if fileCategory == "image" {
-		maxSize = int64(global.AppConfig.Site.MaxFileSize * 1024 * 1024)
+		categoryMaxSize = int64(global.AppConfig.Site.MaxFileSize * 1024 * 1024)
 	} else {
-		maxSize = int64(global.AppConfig.Site.MaxDocumentSize * 1024 * 1024)
+		categoryMaxSize = int64(global.AppConfig.Site.MaxDocumentSize * 1024 * 1024)
 	}
 
 	// 检查文件大小
-	if header.Size > maxSize {
-		maxSizeMB := maxSize / (1024 * 1024)
+	if header.Size > categoryMaxSize {
+		maxSizeMB := categoryMaxSize / (1024 * 1024)
 		sendJSONError(w, fmt.Sprintf("文件大小超过限制 (%dMB)", maxSizeMB), http.StatusBadRequest)
 		return
 	}
