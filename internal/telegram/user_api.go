@@ -525,18 +525,18 @@ func GetUserFileURL(ctx context.Context, fileID string) (string, error) {
 	return global.Bot.GetFileDirectURL(fileID)
 }
 
-// 优化项3：流式下载器
+// DocumentStreamReader 流式下载器
 type DocumentStreamReader struct {
-	api       *tg.Client
-	docID     int64
+	api        *tg.Client
+	docID      int64
 	accessHash int64
-	fileRef   []byte
-	offset    int64
-	chunkSize int64
-	buffer    []byte
-	bufPos    int
-	eof       bool
-	mu        sync.Mutex
+	fileRef    []byte
+	offset     int64
+	chunkSize  int64
+	buffer     []byte
+	bufPos     int
+	eof        bool
+	mu         sync.Mutex
 }
 
 // NewDocumentStreamReader 创建流式下载器
@@ -546,7 +546,7 @@ func NewDocumentStreamReader(api *tg.Client, docID, accessHash int64, fileRef []
 		docID:      docID,
 		accessHash: accessHash,
 		fileRef:    fileRef,
-		chunkSize:  1024 * 1024, // 1MB per chunk
+		chunkSize:  1024 * 1024, // 1MB per chunk (Telegram API limit)
 	}
 }
 
@@ -567,8 +567,8 @@ func (r *DocumentStreamReader) Read(p []byte) (n int, err error) {
 		return 0, io.EOF
 	}
 
-	// 下载下一个块
-	chunk, err := r.fetchNextChunk(context.Background())
+	// 从 Telegram 下载下一个数据块
+	chunk, err := r.fetchNextChunk()
 	if err != nil {
 		return 0, err
 	}
@@ -578,19 +578,22 @@ func (r *DocumentStreamReader) Read(p []byte) (n int, err error) {
 		return 0, io.EOF
 	}
 
+	// 复制数据到用户缓冲区
 	n = copy(p, chunk)
 	if n < len(chunk) {
-		// 保存剩余数据到缓冲区
+		// 保存剩余数据到内部缓冲区
 		r.buffer = chunk[n:]
+		r.bufPos = 0
+	} else {
+		r.buffer = nil
 		r.bufPos = 0
 	}
 
-	r.offset += int64(n)
 	return n, nil
 }
 
 // fetchNextChunk 获取下一个数据块
-func (r *DocumentStreamReader) fetchNextChunk(ctx context.Context) ([]byte, error) {
+func (r *DocumentStreamReader) fetchNextChunk() ([]byte, error) {
 	fileLocation := &tg.InputDocumentFileLocation{
 		ID:            r.docID,
 		AccessHash:    r.accessHash,
@@ -598,7 +601,7 @@ func (r *DocumentStreamReader) fetchNextChunk(ctx context.Context) ([]byte, erro
 		ThumbSize:     "",
 	}
 
-	fileResult, err := r.api.UploadGetFile(ctx, &tg.UploadGetFileRequest{
+	fileResult, err := r.api.UploadGetFile(context.Background(), &tg.UploadGetFileRequest{
 		Location:     fileLocation,
 		Offset:       r.offset,
 		Limit:        int(r.chunkSize),
@@ -611,6 +614,7 @@ func (r *DocumentStreamReader) fetchNextChunk(ctx context.Context) ([]byte, erro
 
 	switch f := fileResult.(type) {
 	case *tg.UploadFile:
+		r.offset += int64(len(f.Bytes))
 		return f.Bytes, nil
 	case *tg.UploadFileCDNRedirect:
 		return nil, fmt.Errorf("CDN redirect not implemented")
@@ -624,7 +628,7 @@ func (r *DocumentStreamReader) Close() error {
 	return nil
 }
 
-// StreamDocument 流式下载文档（优化项3）
+// StreamDocument 流式下载文档
 func StreamDocument(ctx context.Context, fileID string) (io.ReadCloser, error) {
 	if UserClient == nil {
 		return nil, fmt.Errorf("User API client not initialized")
@@ -632,7 +636,7 @@ func StreamDocument(ctx context.Context, fileID string) (io.ReadCloser, error) {
 
 	api := UserClient.API()
 
-	// 解析 fileID 格式：document:ID:AccessHash:FileReference（优化项4）
+	// 解析 fileID 格式：document:ID:AccessHash:FileReference
 	var docID int64
 	var accessHash int64
 	var fileRefStr string
@@ -642,17 +646,14 @@ func StreamDocument(ctx context.Context, fileID string) (io.ReadCloser, error) {
 		return nil, fmt.Errorf("invalid fileID format: %s", fileID)
 	}
 
-	// 优化项4：解码 FileReference
+	// 解码 FileReference
 	var fileRef []byte
 	if n >= 3 && fileRefStr != "" {
 		fileRef, err = base64.StdEncoding.DecodeString(fileRefStr)
 		if err != nil {
-			log.Printf("Failed to decode file reference, using empty: %v", err)
 			fileRef = []byte{}
 		}
 	}
-
-	log.Printf("Streaming document via User API: ID=%d, AccessHash=%d", docID, accessHash)
 
 	return NewDocumentStreamReader(api, docID, accessHash, fileRef), nil
 }
