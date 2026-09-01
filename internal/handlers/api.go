@@ -235,15 +235,14 @@ func HandleAPIUpload(w http.ResponseWriter, r *http.Request) {
 			fileID = message.Document.FileID
 		}
 
+		// telegramURL 仅作登记参考值，访问链路不依赖此值，获取失败不阻断上传
 		telegramURL, err = global.Bot.GetFileDirectURL(fileID)
 		if err != nil {
-			sendJSONError(w, "获取文件URL失败", http.StatusInternalServerError)
-			return
+			logger.Error("[%s] 获取文件URL失败（非致命）: %v", requestID, err)
 		}
 
-		proxyUUID := uuid.New().String()
-		encodedFilename := url.PathEscape(filename)
-		proxyURLPath = fmt.Sprintf("/file/%s-%s", proxyUUID, encodedFilename)
+		// 图片：fileId 直链（新架构，访问不依赖数据库）
+		proxyURLPath = utils.BuildFileIDURL(fileID, filename)
 
 	} else if fileCategory == "document" {
 		// 文档文件：使用 User API（更快）
@@ -301,48 +300,53 @@ func HandleAPIUpload(w http.ResponseWriter, r *http.Request) {
 		tableName = "documents"
 	}
 
-	err = db.WithDBTimeout(func(ctx context.Context) error {
-		var insertSQL string
-		if fileCategory == "image" {
-			insertSQL = fmt.Sprintf(`
+	// 登记到数据库（best-effort：降级/失败不阻断上传——链接已具备完整访问能力）
+	if !db.IsAvailable() {
+		logger.Error("[%s] 数据库不可用，跳过登记（非致命）: fileID=%s", requestID, fileID)
+		err = nil
+	} else {
+		err = db.WithDBTimeout(func(ctx context.Context) error {
+			var insertSQL string
+			if fileCategory == "image" {
+				insertSQL = fmt.Sprintf(`
 				INSERT INTO %s (
 					telegram_url, proxy_url, ip_address, user_agent,
 					filename, content_type, file_id, upload_time
 				) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 			`, tableName)
-		} else {
-			insertSQL = fmt.Sprintf(`
+			} else {
+				insertSQL = fmt.Sprintf(`
 				INSERT INTO %s (
 					telegram_url, proxy_url, ip_address, user_agent,
 					filename, content_type, file_id, file_size, upload_time
 				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 			`, tableName)
-		}
+			}
 
-		stmt, err := global.DB.PrepareContext(ctx, insertSQL)
-		if err != nil {
+			stmt, err := global.DB.PrepareContext(ctx, insertSQL)
+			if err != nil {
+				return err
+			}
+			defer stmt.Close()
+
+			if fileCategory == "image" {
+				_, err = stmt.ExecContext(ctx,
+					telegramURL, proxyURLPath, ipAddress, userAgent,
+					filename, contentType, fileID, uploadTime,
+				)
+			} else {
+				_, err = stmt.ExecContext(ctx,
+					telegramURL, proxyURLPath, ipAddress, userAgent,
+					filename, contentType, fileID, header.Size, uploadTime,
+				)
+			}
 			return err
-		}
-		defer stmt.Close()
-
-		if fileCategory == "image" {
-			_, err = stmt.ExecContext(ctx,
-				telegramURL, proxyURLPath, ipAddress, userAgent,
-				filename, contentType, fileID, uploadTime,
-			)
-		} else {
-			_, err = stmt.ExecContext(ctx,
-				telegramURL, proxyURLPath, ipAddress, userAgent,
-				filename, contentType, fileID, header.Size, uploadTime,
-			)
-		}
-		return err
-	})
+		})
+	}
 
 	if err != nil {
-		logger.Error("[%s] 数据库插入失败: %v", requestID, err)
-		sendJSONError(w, "保存记录失败", http.StatusInternalServerError)
-		return
+		// 登记失败不阻断上传：链接已具备完整访问能力（FR-006）
+		logger.Error("[%s] 数据库登记失败（非致命，链接仍有效）: %v", requestID, err)
 	}
 
 	// 返回成功响应

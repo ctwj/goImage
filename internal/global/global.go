@@ -11,11 +11,12 @@ import (
 
 var (
 	// 全局变量
-	DB         *sql.DB
-	AppConfig  Config
-	Bot        *tgbotapi.BotAPI
-	Store      *sessions.CookieStore // 移除初始化，将在 main 中进行
-	UserClient interface{}           // User API 客户端
+	DB          *sql.DB
+	DBAvailable bool // 数据库是否可用：降级模式下为 false，图片访问不受影响，仅管理功能（登记/统计/禁用）受限
+	AppConfig   Config
+	Bot         *tgbotapi.BotAPI
+	Store       *sessions.CookieStore // 移除初始化，将在 main 中进行
+	UserClient  interface{}           // User API 客户端
 
 	// 并发控制
 	UploadSemaphore chan struct{} // 用于限制并发上传
@@ -36,19 +37,19 @@ var (
 		"image/gif":  ".gif",
 		"image/webp": ".webp",
 		// 文档类型
-		"application/pdf":                                                    ".pdf",
-		"application/zip":                                                    ".zip",
-		"application/x-zip-compressed":                                       ".zip",
-		"application/msword":                                                 ".doc",
+		"application/pdf":              ".pdf",
+		"application/zip":              ".zip",
+		"application/x-zip-compressed": ".zip",
+		"application/msword":           ".doc",
 		"application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
-		"application/vnd.ms-excel":                                           ".xls",
-		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":  ".xlsx",
-		"application/vnd.ms-powerpoint":                                      ".ppt",
+		"application/vnd.ms-excel": ".xls",
+		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":         ".xlsx",
+		"application/vnd.ms-powerpoint":                                             ".ppt",
 		"application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
-		"text/plain":                                                         ".txt",
-		"application/vnd.oasis.opendocument.text":                            ".odt",
-		"application/vnd.oasis.opendocument.spreadsheet":                     ".ods",
-		"application/vnd.oasis.opendocument.presentation":                    ".odp",
+		"text/plain": ".txt",
+		"application/vnd.oasis.opendocument.text":         ".odt",
+		"application/vnd.oasis.opendocument.spreadsheet":  ".ods",
+		"application/vnd.oasis.opendocument.presentation": ".odp",
 	}
 
 	IsDevelopment = false // 开发环境标志，默认为生产环境
@@ -118,6 +119,7 @@ type ImageRecord struct {
 	ContentType string
 	IsActive    bool
 	ViewCount   int
+	FileID      string // 访问主键：fileId 直链架构下管理操作的定位键
 }
 
 // DocumentRecord 文档记录结构

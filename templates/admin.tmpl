@@ -449,6 +449,11 @@
     </div>
 
     <div class="container">
+        {{if not .DBAvailable}}
+        <div style="background:#fff3cd;border:1px solid #ffc107;color:#856404;padding:12px 16px;border-radius:6px;margin-bottom:16px;">
+            ⚠️ 数据库不可用（降级模式）：图片访问不受影响，管理功能暂时不可用。恢复数据库并重启服务后自动恢复。
+        </div>
+        {{end}}
         <div class="tabs">
             <button class="tab-button {{if eq .ViewType "image"}}active{{end}}" onclick="switchTab('image')">图片列表</button>
             <button class="tab-button {{if eq .ViewType "document"}}active{{end}}" onclick="switchTab('document')">文件列表</button>
@@ -506,7 +511,7 @@
                         <td>{{.ViewCount}}</td>
                         <td>{{if .IsActive}}✓ 活跃{{else}}✗ 已删除{{end}}</td>
                         <td>
-                            <button onclick="toggleStatus('image', {{.ID}})" 
+                            <button onclick="toggleStatus('image', '{{.FileID}}')"
                                 class="action-button {{if .IsActive}}delete-button{{else}}restore-button{{end}}">
                                 {{if .IsActive}}删除{{else}}恢复{{end}}
                             </button>

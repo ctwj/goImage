@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"log"
 	"time"
 
@@ -12,12 +13,15 @@ import (
 )
 
 func InitDB() {
+	global.DBAvailable = false
+
 	// 获取数据库路径（从配置文件加载，无默认值）
 	dbPath := global.AppConfig.Database.Path
 
-	// 验证路径不为空
+	// 验证路径不为空：降级模式（访问不依赖数据库，仅管理功能受限）
 	if dbPath == "" {
-		log.Fatal("Database path is empty. Please check your config.json configuration.")
+		log.Println("WARNING: Database path is empty. Running in degraded mode: admin features disabled, image access unaffected.")
+		return
 	}
 
 	log.Printf("Initializing database at: %s", dbPath)
@@ -28,12 +32,16 @@ func InitDB() {
 	// - synchronous=NORMAL：使用普通同步模式，在性能和安全性之间取得平衡
 	global.DB, err = sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_synchronous=NORMAL")
 	if err != nil {
-		log.Fatalf("Failed to open database at %s: %v", dbPath, err)
+		degrade(fmt.Sprintf("Failed to open database at %s: %v", dbPath, err))
+		return
 	}
 
 	// 验证数据库连接
 	if err = global.DB.Ping(); err != nil {
-		log.Fatalf("Failed to connect to database: %v", err)
+		global.DB.Close()
+		global.DB = nil
+		degrade(fmt.Sprintf("Failed to connect to database: %v", err))
+		return
 	}
 
 	log.Println("Database connection established successfully")
@@ -54,7 +62,10 @@ func InitDB() {
 	)`)
 
 	if err != nil {
-		log.Fatal(err)
+		global.DB.Close()
+		global.DB = nil
+		degrade(fmt.Sprintf("Failed to create images table: %v", err))
+		return
 	}
 
 	// 创建 documents 表
@@ -75,7 +86,10 @@ func InitDB() {
 	)`)
 
 	if err != nil {
-		log.Fatal(err)
+		global.DB.Close()
+		global.DB = nil
+		degrade(fmt.Sprintf("Failed to create documents table: %v", err))
+		return
 	}
 
 	// 创建优化的索引
@@ -98,7 +112,10 @@ func InitDB() {
     `)
 
 	if err != nil {
-		log.Fatal(err)
+		global.DB.Close()
+		global.DB = nil
+		degrade(fmt.Sprintf("Failed to create indexes: %v", err))
+		return
 	}
 
 	// 设置数据库连接池参数
@@ -123,8 +140,26 @@ func InitDB() {
 	global.DB.SetConnMaxLifetime(connMaxLifetime)
 
 	if err := global.DB.Ping(); err != nil {
-		log.Fatal("Database connection failed:", err)
+		global.DB.Close()
+		global.DB = nil
+		degrade(fmt.Sprintf("Database connection failed: %v", err))
+		return
 	}
+
+	global.DBAvailable = true
+}
+
+// degrade 输出降级警告。数据库不可用不阻止服务启动：
+// 图片访问不依赖数据库，仅管理功能（登记/统计/禁用）受限。
+func degrade(reason string) {
+	log.Printf("WARNING: %s", reason)
+	log.Println("WARNING: Running in degraded mode: admin features disabled, image access unaffected.")
+}
+
+// IsAvailable 报告数据库是否可用于可选增强（登记/统计/禁用检查）。
+// 调用方在不可用时必须静默跳过数据库操作，不得影响访问结果。
+func IsAvailable() bool {
+	return global.DBAvailable && global.DB != nil
 }
 
 // 数据库操作超时包装函数

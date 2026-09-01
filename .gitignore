@@ -30,6 +30,10 @@ bin/
 config.json
 developement_testing/
 
+# 运行时数据（数据库与会话，勿提交）
+*.db
+session.tg
+
 imageHosting
 main
 td-main

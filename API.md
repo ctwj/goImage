@@ -270,7 +270,7 @@ curl -X POST https://your-domain.com/api/v1/upload \
   "success": true,
   "message": "上传成功",
   "data": {
-    "url": "https://example.com/file/abc123.jpg",
+    "url": "https://example.com/file/AgACAgUAAx0CPQAB1w.example.jpg",
     "filename": "example.jpg",
     "contentType": "image/jpeg",
     "size": 123456,
@@ -278,6 +278,8 @@ curl -X POST https://your-domain.com/api/v1/upload \
   }
 }
 ```
+
+> **链接格式说明**：图片链接由 Telegram fileId 与文件名组成（`/file/{fileId}.{filename}`），自带文件定位信息，访问不依赖服务端数据库——即使数据库损坏，重新部署后链接依然可用。文档链接（`/doc/...`）格式不变。
 
 失败响应示例：
 ```json
