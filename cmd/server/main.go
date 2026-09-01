@@ -105,9 +105,13 @@ func main() {
 		os.Exit(0)
 	}
 
-	// 初始化数据库
+	// 初始化数据库（失败时进入降级模式，不阻止启动：访问不依赖数据库）
 	db.InitDB()
-	logger.Info("数据库连接初始化完成")
+	if db.IsAvailable() {
+		logger.Info("数据库连接初始化完成")
+	} else {
+		logger.Warn("数据库不可用，进入降级模式：管理功能受限，图片访问不受影响")
+	}
 
 	// 初始化 Telegram bot
 	telegram.InitTelegram()
@@ -189,6 +193,7 @@ func main() {
 	r.HandleFunc("/logout", handlers.HandleLogout).Methods("GET")
 	r.HandleFunc("/admin", middleware.RequireAuth(handlers.HandleAdmin)).Methods("GET")
 	r.HandleFunc("/admin/toggle/{type}/{id}", middleware.RequireAuth(handlers.HandleToggleStatus)).Methods("POST")
+	r.HandleFunc("/admin/rebuild", middleware.RequireAuth(handlers.HandleRebuild)).Methods("POST")
 
 	// RESTful API 路由
 	apiRouter := r.PathPrefix("/api/v1").Subrouter()
@@ -217,7 +222,7 @@ func main() {
 		Addr:           addr,
 		Handler:        middleware.LoggingMiddleware(r), // 添加日志记录中间件
 		ReadTimeout:    15 * time.Second,
-		WriteTimeout:   60 * time.Minute, // 增加写入超时，支持大文件上传
+		WriteTimeout:   60 * time.Minute,  // 增加写入超时，支持大文件上传
 		IdleTimeout:    120 * time.Second, // 增加空闲连接超时
 		MaxHeaderBytes: 1 << 20,           // 限制请求头大小为 1MB
 	}
@@ -250,10 +255,14 @@ func main() {
 	}
 
 	logger.Info("正在关闭数据库连接...")
-	if err := global.DB.Close(); err != nil {
-		logger.Error("数据库关闭错误: %v", err)
+	if global.DB != nil {
+		if err := global.DB.Close(); err != nil {
+			logger.Error("数据库关闭错误: %v", err)
+		} else {
+			logger.Info("数据库连接关闭成功")
+		}
 	} else {
-		logger.Info("数据库连接关闭成功")
+		logger.Info("数据库处于降级模式，跳过关闭")
 	}
 
 	logger.Info("服务已完全关闭，感谢使用")
